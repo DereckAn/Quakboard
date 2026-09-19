@@ -166,7 +166,7 @@ CREATE INDEX idx_created_at ON clipboard_items(created_at DESC);
 CREATE INDEX idx_content_type ON clipboard_items(content_type);
 ```
 
-**Location**: `~/Library/Application Support/clip/clipboard.db`
+**Location**: `~/Library/Application Support/com.dereckan.quakboard/clipboard.db` (macOS); `~/.local/share/com.dereckan.quakboard/clipboard.db` (Linux)
 
 ## Development Commands
 
@@ -551,7 +551,7 @@ lsof -ti:1420 | xargs kill -9
 pkill -9 global_clipboard
 
 # Clear app data (WARNING: deletes all clipboard history)
-rm -rf ~/Library/Application\ Support/clip/
+rm -rf ~/Library/Application\ Support/com.dereckan.quakboard/
 ```
 
 ### Rust compilation errors
