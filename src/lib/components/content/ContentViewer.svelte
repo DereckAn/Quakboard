@@ -415,31 +415,6 @@
                 }
               }}
             />
-
-            <!-- Image info overlay -->
-            <div
-              class="absolute bottom-4 left-4 right-4 bg-surface/10 backdrop-blur rounded-lg p-3 border border-border z-20"
-            >
-              <div class="flex items-center justify-between gap-4">
-                <div class="flex items-center gap-3">
-                  <Icon name="image" size={20} class="text-primary" />
-                  <div>
-                    <p class="text-xs text-white">
-                      {(parsedMetadata?.width as number) ||
-                        "?"}x{(parsedMetadata?.height as number) || "?"} -
-                      {item.fileSizeBytes
-                        ? (item.fileSizeBytes / 1024).toFixed(0)
-                        : "?"} KB
-                    </p>
-                    {#if isExternalImage}
-                      <p class="text-[10px] text-white/70">
-                        Preview from Quick Look cache
-                      </p>
-                    {/if}
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         {:else}
           <div class="text-center">

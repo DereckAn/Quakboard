@@ -3,13 +3,19 @@ export interface LanguageInfo {
   svgPath: string;
 }
 
+// NOTE: let Vite bundle the icons and hand back their URLs. A hand-built
+// `asset://localhost/...` URL only resolves on some platforms (Windows needs
+// `http://asset.localhost/`) and points at the filesystem, not the bundle.
+const svgUrls = import.meta.glob<string>("/src/assets/svg/*.svg", {
+  eager: true,
+  query: "?url",
+  import: "default",
+});
+
 export function getLanguageInfo(language: string | null): LanguageInfo | null {
   if (!language) return null;
 
-  // En desarrollo usa /src/assets, en producción usa la ruta del asset protocol
-  const isDev = import.meta.env.DEV;
-  const assetPath = (name: string) =>
-    isDev ? `/src/assets/svg/${name}.svg` : `asset://localhost/svg/${name}.svg`;
+  const assetPath = (name: string) => svgUrls[`/src/assets/svg/${name}.svg`];
 
   const languages: Record<string, LanguageInfo> = {
     javascript: {
@@ -106,10 +112,6 @@ export function getLanguageInfo(language: string | null): LanguageInfo | null {
     },
   };
 
-  return (
-    languages[language.toLowerCase()] || {
-      name: language.toUpperCase(),
-      svgPath: assetPath("code"),
-    }
-  );
+  // No icon for unknown languages; callers fall back to the generic code icon.
+  return languages[language.toLowerCase()] ?? null;
 }

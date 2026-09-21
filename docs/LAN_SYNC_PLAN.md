@@ -18,11 +18,14 @@ Goal: copy text on one computer and paste it on another. Chosen scope for v1: **
 - `chacha20poly1305`: encrypts every clip with the per-peer key.
 
 ## Design
-**Identity and peers**: `<app_data_dir>/sync.json` holds `{ device_id, device_name, peers: [{ id, name, key_b64 }] }`. `device_id` is a UUID generated on first run, and `device_name` defaults to the hostname.
+**Identity and peers**: `<app_data_dir>/sync.json` holds `{ device_id, device_name, peers: [{ id, name, key_b64, last_addr }] }`.
+- `device_id` is a UUID generated on first run.
+- `device_name` defaults to the hostname. It is shared only with the other device during pairing, never broadcast.
+- `last_addr` is the peer's last known `ip:port`, updated after every successful send or receive.
 
 **Transport**:
 - Each device runs a tokio TCP listener on a fixed port, **47823**. It's fixed so users can allow it through their firewall.
-- Each device advertises itself over mDNS with TXT `id=<device_id>`, `name=<name>`.
+- Each device advertises itself over mDNS only while sync is enabled. The service instance name and TXT record carry only an opaque ID (`id=<device_id>`), with no hostname or user name, so people on public Wi‑Fi can't see who is running the app. The Discovered list shows unpaired devices as "Quakboard device (#ab12)", where the suffix is the last 4 characters of the ID.
 - Each message uses its own connection (connect → send → close). That's fine at clipboard rates.
   - `ponytail:` one connection per clip; switch to persistent connections if latency ever matters.
 - A frame is a 4‑byte length followed by JSON:
@@ -31,13 +34,14 @@ Goal: copy text on one computer and paste it on another. Chosen scope for v1: **
 - Frames over 1 MB are rejected. Frames from unknown peers, or that fail to decrypt, are dropped.
 
 **Pairing flow**:
-1. On device A, Settings → Devices lists devices found via mDNS that aren't paired yet. Click **Pair**.
+1. On device A, Settings → Devices lists devices found via mDNS that aren't paired yet. Click **Pair**. If mDNS is blocked on the network, use **Connect by IP** instead: enter B's IP address, which B's Devices screen displays.
 2. Device B gets `PairHello`, makes a random 6‑digit code, and emits `sync-pairing-code`. The frontend shows it in a modal.
-3. The user types the code on A. Both sides finish SPAKE2 and exchange a key confirmation, then each stores the other as a peer. A wrong code fails the confirmation and nothing is stored.
+3. The user types the code on A. Both sides finish SPAKE2 and exchange a key confirmation. Only after that do they send each other their friendly names, encrypted. Each then stores the other as a peer. A wrong code fails the confirmation and nothing is stored.
 
 **Sending** (monitor text path, after a successful save):
 - Only if `syncEnabled` is on, the text isn't what we last *received* (echo guard), and the content is text-based.
-- Then `sync::broadcast(text, content_type)` is spawned. It looks up each paired peer's current address from the mDNS cache and sends. Offline peers are skipped (no queue in v1).
+- Then `sync::broadcast(text, content_type)` is spawned. For each paired peer it tries `last_addr` first, with a short connect timeout (~1s). If that fails, it resolves the peer's current address from the mDNS cache and retries once. Offline peers are skipped (no queue in v1).
+- Connecting to the known IP first means mDNS only does real work when a peer's IP changes, which keeps multicast traffic minimal.
 
 **Receiving**:
 - Decrypt, set `sync::LAST_RECEIVED = text`, then call `operations::write_clipboard(text)`.
@@ -49,7 +53,7 @@ Goal: copy text on one computer and paste it on another. Chosen scope for v1: **
 ## Files
 - **New** `src-tauri/src/sync/mod.rs`: the listener, mDNS browse/advertise, `broadcast`, frame encode/decode, encryption, `LAST_RECEIVED`, and sync.json load/save.
 - **New** `src-tauri/src/sync/pairing.rs`: the SPAKE2 handshake for both sides.
-- **New** `src-tauri/src/commands/sync.rs`: commands `sync_set_enabled`, `sync_get_status` (device name, enabled), `sync_list_discovered`, `sync_list_peers`, `sync_pair_start(device_id)`, `sync_pair_submit_code(code)`, `sync_unpair(id)`, `sync_rename_device(name)`.
+- **New** `src-tauri/src/commands/sync.rs`: commands `sync_set_enabled`, `sync_get_status` (device name, enabled), `sync_list_discovered`, `sync_list_peers`, `sync_pair_start(device_id)`, `sync_pair_by_address(ip)`, `sync_pair_submit_code(code)`, `sync_get_local_addresses`, `sync_unpair(id)`, `sync_rename_device(name)`.
 - **Edit** [lib.rs](src-tauri/src/lib.rs): `mod sync;`, start sync in `setup` if enabled, and register the commands.
 - **Edit** [commands/mod.rs](src-tauri/src/commands/mod.rs): export the new commands.
 - **Edit** [monitor.rs](src-tauri/src/clipboard/monitor.rs): call `sync::broadcast` in the text branch, behind the echo guard.
@@ -60,8 +64,16 @@ Goal: copy text on one computer and paste it on another. Chosen scope for v1: **
   - the paired list with Unpair
   - the discovered list with Pair
   - a code-entry input
+  - "Connect by IP" (an IP input), plus this device's own LAN IPs so they can be read off and typed on the other device
   - a code-display modal, listening to `sync-pairing-code`
 - Capabilities: no change. Commands are plain `invoke`.
+
+## Network impact at scale
+- mDNS is link-local multicast (224.0.0.251:5353). Routers don't forward it, so load depends on devices **per Wi‑Fi network**, not on the total user count.
+- Per device it's one small record (~200–400 bytes). Other devices cache it, searches back off exponentially, and a device doesn't reply with records the asker already has cached. Steady state is well under 1 KB/min per device, the same kind of traffic printers and Chromecasts already produce.
+- On large shared Wi‑Fi (offices, campuses), multicast goes out at the slowest Wi‑Fi rate. That's the reason for advertising only while sync is enabled and connecting to `last_addr` first.
+- The bigger risk is that **many corporate, campus, hotel and café networks block mDNS** or isolate clients from each other. Connect by IP covers networks that only block mDNS. With full client isolation LAN sync can't work at all; the cloud relay (roadmap v1.2) is the real fix there.
+- `mdns-sd` runs its own responder next to Avahi/Bonjour on port 5353. Multiple responders are normal, but check this on Linux with Avahi running.
 
 ## Out of scope (v1)
 - Images and files
@@ -82,4 +94,7 @@ Each can be added when needed.
    2. Pair using the code, then copy text on A and paste it on B. It should appear in B's history, and A must not receive it back.
    3. Try a wrong code: pairing fails and nothing is stored.
    4. Turn sync off on B: A's copies stop arriving.
-   5. On Linux, if nothing is discovered, check firewall rules for TCP 47823 and UDP 5353 (mDNS).
+   5. Pair using Connect by IP with mDNS disabled or blocked (for example, stop Avahi, or block UDP 5353 in the firewall).
+   6. Change B's IP (reconnect Wi‑Fi or renew DHCP): the next copy from A should still arrive, via the mDNS fallback.
+   7. With `tcpdump -i any udp port 5353` running, confirm the app is silent on mDNS in steady state and that no hostname appears in its packets.
+   8. On Linux, if nothing is discovered, check firewall rules for TCP 47823 and UDP 5353 (mDNS).

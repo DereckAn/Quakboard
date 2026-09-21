@@ -41,6 +41,13 @@
     }
   });
   const isFile = $derived(item?.contentType === "file");
+  const isImage = $derived(item?.contentType === "image");
+  const imageDimensions = $derived(
+    isImage && parsedMetadata?.width && parsedMetadata?.height
+      ? `${parsedMetadata.width} × ${parsedMetadata.height} px`
+      : null
+  );
+  const isExternalImage = $derived(isImage && parsedMetadata?.source === "file");
 </script>
 
 <div class="absolute bottom-0 left-0 right-0 h-44 mx-3 mb-3 border border-border bg-surface rounded-2xl flex flex-col ">
@@ -99,6 +106,20 @@
         <div class="flex items-center justify-between p-1.5">
           <dt class="text-text-muted">Size</dt>
           <dd class="text-text">{formatFileSize(item.fileSizeBytes)}</dd>
+        </div>
+      {/if}
+
+      {#if imageDimensions}
+        <div class="flex items-center justify-between p-1.5">
+          <dt class="text-text-muted">Dimensions</dt>
+          <dd class="text-text">{imageDimensions}</dd>
+        </div>
+      {/if}
+
+      {#if isExternalImage}
+        <div class="flex items-center justify-between p-1.5">
+          <dt class="text-text-muted">Preview</dt>
+          <dd class="text-text">Quick Look cache</dd>
         </div>
       {/if}
 
