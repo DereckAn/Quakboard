@@ -203,21 +203,97 @@ pub fn write_file_to_clipboard(path: String) -> Result<(), String> {
     }
 }
 
+/// Terminals paste with Ctrl+Shift+V; plain Ctrl+V reaches the shell as `^V`.
+/// ponytail: known-class list; unknown terminals get Ctrl+V. Add a per-app
+/// paste-shortcut setting if users hit that.
+#[cfg(not(target_os = "macos"))]
+const TERMINAL_CLASSES: &[&str] = &[
+    "kitty",
+    "alacritty",
+    "foot",
+    "footclient",
+    "org.wezfurlong.wezterm",
+    "com.mitchellh.ghostty",
+    "dev.warp.warp",
+    "org.kde.konsole",
+    "org.gnome.terminal",
+    "org.gnome.console",
+    "org.gnome.ptyxis",
+    "xterm",
+    "tilix",
+    "terminator",
+    "xfce4-terminal",
+];
+
+#[cfg(not(target_os = "macos"))]
+struct HyprWindow {
+    address: String,
+    class: String,
+}
+
 /// On Hyprland, find the window that was focused right before ours
 /// (focusHistoryID == 1) — i.e. the app the user wants to paste into.
 #[cfg(not(target_os = "macos"))]
-fn hypr_previous_window_address() -> Option<String> {
+fn hypr_previous_window() -> Option<HyprWindow> {
     let output = std::process::Command::new("hyprctl")
         .args(["clients", "-j"])
         .output()
         .ok()?;
     let clients: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    clients
+    let client = clients
         .as_array()?
         .iter()
-        .find(|c| c.get("focusHistoryID").and_then(|v| v.as_i64()) == Some(1))
-        .and_then(|c| c.get("address").and_then(|v| v.as_str()))
-        .map(|s| s.to_string())
+        .find(|c| c.get("focusHistoryID").and_then(|v| v.as_i64()) == Some(1))?;
+    Some(HyprWindow {
+        address: client.get("address")?.as_str()?.to_string(),
+        class: client
+            .get("class")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase(),
+    })
+}
+
+/// Run `hyprctl dispatch` with each argument form in turn until one succeeds.
+/// Hyprland 0.55+ evaluates `dispatch` arguments as Lua and rejects the legacy
+/// syntax, so callers pass the Lua form first and the legacy form as fallback.
+#[cfg(not(target_os = "macos"))]
+fn hypr_dispatch(forms: &[&[&str]]) -> bool {
+    forms.iter().any(|args| {
+        std::process::Command::new("hyprctl")
+            .arg("dispatch")
+            .args(*args)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "ok")
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn hypr_focus_window(addr: &str) {
+    let lua = format!("hl.dsp.focus({{ window = \"address:{addr}\" }})");
+    let legacy = format!("address:{addr}");
+    if !hypr_dispatch(&[&[&lua], &["focuswindow", &legacy]]) {
+        eprintln!("Failed to focus paste target window {addr}");
+    }
+}
+
+/// Send the paste shortcut through Hyprland's real keyboard. wtype uses its own
+/// virtual keymap, so Electron apps (VS Code) read a different physical key
+/// than `v` and trigger unrelated shortcuts.
+#[cfg(not(target_os = "macos"))]
+fn hypr_send_paste(target: &HyprWindow) -> bool {
+    let mods = if TERMINAL_CLASSES.contains(&target.class.as_str()) {
+        "CTRL SHIFT"
+    } else {
+        "CTRL"
+    };
+    let addr = &target.address;
+    let lua = format!(
+        "hl.dsp.send_shortcut({{ mods = \"{mods}\", key = \"v\", window = \"address:{addr}\" }})"
+    );
+    let legacy = format!("{mods}, V, address:{addr}");
+    hypr_dispatch(&[&[&lua], &["sendshortcut", &legacy]])
 }
 
 #[tauri::command]
@@ -226,7 +302,7 @@ pub fn paste_item(text: String, window: tauri::WebviewWindow) -> Result<(), Stri
     // (right now our app is focused; the target is the previous window).
     #[cfg(not(target_os = "macos"))]
     let wayland_paste_target = if detect_backend() == ClipboardBackend::Wayland {
-        hypr_previous_window_address()
+        hypr_previous_window()
     } else {
         None
     };
@@ -260,18 +336,21 @@ pub fn paste_item(text: String, window: tauri::WebviewWindow) -> Result<(), Stri
     #[cfg(not(target_os = "macos"))]
     std::thread::sleep(std::time::Duration::from_millis(150));
 
-    // On Wayland, enigo can't inject keystrokes (Wayland blocks synthetic input),
-    // so use `wtype` to send Ctrl+V, then return early before the enigo path.
+    // On Wayland, enigo can't inject keystrokes (Wayland blocks synthetic input).
+    // On Hyprland the compositor sends the shortcut; elsewhere fall back to
+    // `wtype`. Either way return early before the enigo path.
     #[cfg(not(target_os = "macos"))]
     {
         if detect_backend() == ClipboardBackend::Wayland {
             // window.hide() doesn't reliably transfer focus here, so explicitly
-            // focus the target window before sending Ctrl+V.
-            if let Some(addr) = &wayland_paste_target {
-                let _ = std::process::Command::new("hyprctl")
-                    .args(["dispatch", "focuswindow", &format!("address:{addr}")])
-                    .status();
+            // focus the target window before sending the paste shortcut.
+            if let Some(target) = &wayland_paste_target {
+                hypr_focus_window(&target.address);
                 std::thread::sleep(std::time::Duration::from_millis(80));
+                if hypr_send_paste(target) {
+                    return Ok(());
+                }
+                eprintln!("Hyprland send_shortcut failed; falling back to wtype");
             }
 
             let status = std::process::Command::new("wtype")
