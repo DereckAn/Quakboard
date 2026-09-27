@@ -27,6 +27,7 @@
   let showDeleteConfirm = $state(false);
   let isDeleting = $state(false);
   let faviconUrl = $state<string>("");
+  let rowElement = $state<HTMLDivElement>();
 
   // Computed
   const isSelected = $derived(uiStore.selectedItemId === item.id);
@@ -67,6 +68,11 @@
     return textPreview.trim().split("\n").slice(0, 6).join("\n");
   });
   let resolvedThumbnail = $state<string | null>(null);
+
+  // Keep the keyboard-selected row visible while arrowing through the list.
+  $effect(() => {
+    if (isSelected) rowElement?.scrollIntoView({ block: "nearest" });
+  });
 
   // Load favicon for links
   $effect(() => {
@@ -193,6 +199,7 @@
 </script>
 
 <div
+  bind:this={rowElement}
   class={cn(
     "group relative flex items-center gap-3 px-1.5 py-0.5 text-sm cursor-pointer transition-colors mx-2",
     isSelected
@@ -216,8 +223,8 @@
     tabindex="0"
     aria-label={item.isFavorite ? "Remove from favorites" : "Add to favorites"}
   >
-    {#if isHoveringIcon && !item.isFavorite}
-      <!-- Show white star on hover -->
+    {#if (isHoveringIcon || isSelected) && !item.isFavorite}
+      <!-- Show white star on hover, or on the keyboard-selected row -->
       <Icon name="star" size={20} class="text-white" />
     {:else if item.isFavorite}
       <!-- Show filled yellow star if favorite -->
@@ -346,7 +353,10 @@
   {#if !showDeleteConfirm}
     <button
       onclick={handleDeleteClick}
-      class="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-danger/20 rounded"
+      class={cn(
+        "shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-danger/20 rounded",
+        isSelected && "opacity-100"
+      )}
       aria-label="Delete item"
     >
       <Icon name="trash" size={16} class="text-text-muted hover:text-danger" />

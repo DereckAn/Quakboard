@@ -10,7 +10,6 @@
     class?: string;
     isSearching?: boolean;
     resultCount?: number;
-    onPaste?: () => void;
   }
 
   let {
@@ -19,7 +18,6 @@
     class: className,
     isSearching = false,
     resultCount,
-    onPaste,
   }: Props = $props();
 
   let inputElement: HTMLInputElement;
@@ -28,15 +26,6 @@
 
   const handleClear = () => {
     value = "";
-  };
-
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      value = "";
-    }
-    if (e.key === "Enter") {
-      onPaste?.();  // Call on paste only if it's not undefined
-    }
   };
 
   onMount(async () => {
@@ -62,7 +51,6 @@
     type="text"
     bind:value
     bind:this={inputElement}
-    onkeydown={handleKeyDown}
     {placeholder}
     class={`w-fit h-7  pr-10 rounded-md text-md text-text placeholder:text-text-muted placeholder:text-sm focus:outline-none pointer-events-auto`}
   />

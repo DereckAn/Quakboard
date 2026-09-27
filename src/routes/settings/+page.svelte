@@ -29,7 +29,16 @@
   const handleBack = () => {
     goto("/");
   };
+
+  const handleWindowKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      handleBack();
+    }
+  };
 </script>
+
+<svelte:window onkeydown={handleWindowKeyDown} />
 
 <div
   class="h-screen w-screen overflow-hidden flex flex-col bg-surface rounded-3xl relative p-3"

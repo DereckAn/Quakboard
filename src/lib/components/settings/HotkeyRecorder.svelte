@@ -136,13 +136,13 @@
   const handleKeyDown = (e: KeyboardEvent) => {
     if (!isRecording || disabled) return;
 
+    e.preventDefault();
+    e.stopPropagation();
+
     if (e.key === "Escape") {
       cancelRecording();
       return;
     }
-
-    e.preventDefault();
-    e.stopPropagation();
 
     const mod = modName(e);
     if (mod) {
@@ -178,7 +178,9 @@
   };
 </script>
 
-<svelte:window onkeydown={handleKeyDown} onkeyup={handleKeyUp} />
+<!-- Capture phase: while recording, keys (incl. Esc) must not reach the
+     page-level shortcuts, which listen on window in the bubble phase. -->
+<svelte:window onkeydowncapture={handleKeyDown} onkeyup={handleKeyUp} />
 
 <div class="flex items-center gap-2">
   <span

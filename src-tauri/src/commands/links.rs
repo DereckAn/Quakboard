@@ -1,4 +1,4 @@
-use reqwest::blocking::Client;
+use reqwest::Client;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 
@@ -10,16 +10,18 @@ pub struct LinkMetadata {
     pub site_name: Option<String>,
 }
 
+// NOTE: async so the request runs off the main thread. A sync command runs on
+// the main thread and froze the whole UI until the page answered or timed out.
 #[tauri::command]
-pub fn fetch_link_metadata(url: String) -> Result<LinkMetadata, String> {
+pub async fn fetch_link_metadata(url: String) -> Result<LinkMetadata, String> {
     let client = Client::builder()
         .user_agent("Mozilla/5.0 (compatible; ClipboardManager/1.0)")
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|e| e.to_string())?;
 
-    let response = client.get(&url).send().map_err(|e| e.to_string())?;
-    let html_content = response.text().map_err(|e| e.to_string())?;
+    let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    let html_content = response.text().await.map_err(|e| e.to_string())?;
     let document = Html::parse_document(&html_content);
 
     let mut metadata = LinkMetadata {

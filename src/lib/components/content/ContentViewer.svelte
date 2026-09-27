@@ -144,26 +144,33 @@
     if (isLink && item?.contentText) {
       loadingMetadata = true;
       linkMetadata = null;
+      // Arrowing past links starts overlapping requests; only the answer for
+      // the link still selected may update the view.
+      let isStale = false;
 
       tauriExtractDomain(item.contentText)
         .then((d) => {
-          domain = d;
+          if (!isStale) domain = d;
         })
         .catch(() => {
-          domain = "";
+          if (!isStale) domain = "";
         });
 
       tauriFetchLinkMetadata(item.contentText)
         .then((metadata) => {
-          linkMetadata = metadata;
+          if (!isStale) linkMetadata = metadata;
         })
         .catch((err) => {
           console.error("Failed to fetch metadata:", err);
-          linkMetadata = null;
+          if (!isStale) linkMetadata = null;
         })
         .finally(() => {
-          loadingMetadata = false;
+          if (!isStale) loadingMetadata = false;
         });
+
+      return () => {
+        isStale = true;
+      };
     } else {
       domain = "";
       linkMetadata = null;

@@ -8,6 +8,7 @@
   import { tauriPastefromClipboard } from "$lib/tauri/commands";
   import type { ClipboardItem, ContentType } from "$lib/types";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onDestroy, onMount } from "svelte";
 
   // Local state
@@ -17,6 +18,7 @@
   let searchTimeoutId: number | null = null;
   let unlistenClipboard: UnlistenFn | null = null;
   let unlistenRemoved: UnlistenFn | null = null;
+  let unlistenFocus: UnlistenFn | null = null;
   let isSearching = $state(false);
 
   // Debounced search - Ahora busca en la base de datos
@@ -46,6 +48,8 @@
         console.log("🔄 No query, loading all items");
         await clipboardStore.loadItems();
       }
+      // New results: start keyboard navigation (and Enter) at the top.
+      selectFirstItem();
     }, 300);
 
     return () => {
@@ -101,12 +105,76 @@
     };
   }
 
+  function selectFirstItem() {
+    uiStore.selectItem(filteredItems[0]?.id ?? null);
+  }
+
   async function handlePaste() {
-    // Use the first filtered item if seraching otherwise the selected item
-    const itemToPaste = filteredItems[0] ?? null;
+    const itemToPaste =
+      filteredItems.find((item) => item.id === uiStore.selectedItemId) ??
+      filteredItems[0];
     if (!itemToPaste?.contentText) return;
 
     await tauriPastefromClipboard(itemToPaste.contentText);
+  }
+
+  function moveSelection(delta: number) {
+    if (filteredItems.length === 0) return;
+
+    const current = filteredItems.findIndex(
+      (item) => item.id === uiStore.selectedItemId,
+    );
+    const next =
+      current === -1
+        ? 0
+        : Math.min(Math.max(current + delta, 0), filteredItems.length - 1);
+    uiStore.selectItem(filteredItems[next].id);
+
+    // Same infinite-scroll rule as Sidebar, so arrows can reach older items.
+    const isNearEnd = next >= filteredItems.length - 5;
+    if (isNearEnd && clipboardStore.hasMore && !clipboardStore.isLoadingMore) {
+      if (debouncedSearchQuery.trim()) {
+        clipboardStore.loadMoreSearchResults(debouncedSearchQuery.trim());
+      } else {
+        clipboardStore.loadMore();
+      }
+    }
+  }
+
+  // Esc undoes one thing at a time: clear the search, then the filter, then
+  // hide the window. Components that own Esc (HotkeyRecorder) stop it first.
+  function handleEscape() {
+    if (searchQuery) {
+      searchQuery = "";
+    } else if (filterType !== "all") {
+      filterType = "all";
+    } else {
+      getCurrentWindow()
+        .hide()
+        .catch((err) => console.error("Failed to hide window:", err));
+    }
+  }
+
+  function handleWindowKeyDown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      handleEscape();
+      return;
+    }
+
+    // Buttons and other controls keep their own Enter/arrow behavior.
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("button, select, textarea, [contenteditable='true']")) {
+      return;
+    }
+
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveSelection(e.key === "ArrowDown" ? 1 : -1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      handlePaste().catch((err) => console.error("Failed to paste:", err));
+    }
   }
 
   // Load items on mount
@@ -157,6 +225,14 @@
           clipboardStore.items.length < clipboardStore.totalItems;
       },
     );
+
+    // The window auto-hides on blur, so gaining focus means it was just opened:
+    // start at the newest item so Enter pastes it, like before.
+    unlistenFocus = await getCurrentWindow().onFocusChanged(
+      ({ payload: focused }) => {
+        if (focused) selectFirstItem();
+      },
+    );
   });
 
   // Cleanup on destroy
@@ -167,8 +243,11 @@
     if (unlistenRemoved) {
       unlistenRemoved();
     }
+    unlistenFocus?.();
   });
 </script>
+
+<svelte:window onkeydown={handleWindowKeyDown} />
 
 <div
   class="h-screen w-[750px] overflow-hidden flex flex-col rounded-3xl bg-[rgba(18,18,20,0.71)]"
@@ -182,7 +261,6 @@
       ? clipboardStore.totalItems
       : undefined}
     isAuthenticated={false}
-    onPaste={handlePaste}
   />
 
   <!-- Main content area -->
