@@ -5,9 +5,6 @@
 //! Everything read here is untrusted: the length is capped before reading,
 //! memory grows only as bytes arrive, and a stalled or trickling sender times
 //! out.
-// NOTE: image sync is built in steps (docs/IMAGE_SYNC_PLAN.md); nothing sends
-// or receives bodies until step 5. Drop this allow then.
-#![allow(dead_code)]
 
 use std::{future::Future, io, time::Duration};
 

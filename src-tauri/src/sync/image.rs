@@ -5,9 +5,6 @@
 //! its header, so a body can't be moved under another image's header or
 //! another device's id. After decrypting, the receiver re-checks length and
 //! hash, so a header can't describe different bytes than it carries.
-// NOTE: image sync is built in steps (docs/IMAGE_SYNC_PLAN.md); nothing seals
-// or opens images until step 5. Drop this allow then.
-#![allow(dead_code)]
 
 use std::io::Cursor;
 

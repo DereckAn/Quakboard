@@ -9,7 +9,13 @@ use crate::clipboard::state;
 use crate::clipboard::types::{detect_code_language, detect_content_type, get_source_app};
 use crate::db::models::CreateClipboardItemDto;
 use crate::db::repository::ClipboardRepository;
-use crate::sync::{runtime::SyncRuntime, ClipPayload};
+use crate::clipboard::image_handler::StoredImageInfo;
+use crate::sync::{
+    image::{pixel_hash, ImageDetails},
+    runtime::SyncRuntime,
+    service::SyncService,
+    ClipPayload,
+};
 use std::{
     fs,
     sync::Arc,
@@ -336,6 +342,25 @@ impl ClipboardMonitor {
                     *last_hash = Some(current_hash.clone());
                 }
 
+                // An image a paired device just sent was already stored by the
+                // receiver; our own clipboard write of it must not be stored or
+                // sent again. Checked after `last_image_hash` is updated, so a
+                // duplicate event for the same write is still filtered above.
+                let sync = self
+                    .app_handle
+                    .try_state::<SyncRuntime>()
+                    .and_then(|runtime| runtime.service());
+                if let Some(sync) = &sync {
+                    let hash = pixel_hash(
+                        image_data.width as u32,
+                        image_data.height as u32,
+                        &image_data.bytes,
+                    );
+                    if sync.take_image_echo(&hash) {
+                        return;
+                    }
+                }
+
                 match save_image_to_disk(&image_data, &self.images_dir, screenshot_hint) {
                     Ok(info) => {
                         if let Ok(repo) = ClipboardRepository::new(&self.repo_path) {
@@ -353,6 +378,12 @@ impl ClipboardMonitor {
                                     {
                                         eprintln!("Failed to emit clipboard-item-added event: {e}");
                                     }
+                                }
+
+                                // Copying it again is a copy: sync it, from the
+                                // stored file (the fresh one is deleted below).
+                                if let Some(stored) = existing_item.file_url.as_deref() {
+                                    sync_image(sync.clone(), stored.into(), image_details(&info));
                                 }
 
                                 let _ = std::fs::remove_file(&info.full_path);
@@ -416,6 +447,7 @@ impl ClipboardMonitor {
                                     }
 
                                     println!("Saved clipboard image: {}", item.id);
+                                    sync_image(sync.clone(), info.full_path.clone(), image_details(&info));
 
                                     if let Err(e) =
                                         self.app_handle.emit("clipboard-item-added", &item)
@@ -660,4 +692,28 @@ fn extract_text_preview(path: &std::path::Path, max_bytes: usize) -> Result<Stri
         text.push_str("\n…");
     }
     Ok(text)
+}
+
+fn image_details(info: &StoredImageInfo) -> ImageDetails {
+    ImageDetails {
+        width: info.width,
+        height: info.height,
+        is_screenshot: info.is_screenshot,
+    }
+}
+
+/// Send a stored image to paired devices in the background. `sync` is None
+/// while sync is off.
+fn sync_image(sync: Option<Arc<SyncService>>, png_path: std::path::PathBuf, details: ImageDetails) {
+    let Some(sync) = sync else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        match tokio::fs::read(&png_path).await {
+            Ok(png) => {
+                sync.broadcast_image(&png, details).await;
+            }
+            Err(e) => eprintln!("Could not read image to sync {}: {e}", png_path.display()),
+        }
+    });
 }

@@ -8,6 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
+    time::{Duration, Instant},
 };
 
 use serde::Serialize;
@@ -18,12 +19,17 @@ use tokio::{
 };
 
 use super::{
-    body::{read_body, IMAGE_BODY_LIMITS},
-    image::{decode_png, open_image, ImageMeta},
+    body::{read_body, write_body, IMAGE_BODY_LIMITS, MAX_IMAGE_BYTES},
+    image::{decode_png, open_image, seal_image, ImageDetails, ImageMeta},
     pairing::{self, LocalDevice, PairError},
     store::{Peer, StoreError, SyncStore},
-    transport, ClipPayload, Frame,
+    transport, ClipPayload, Frame, PeerKey, SyncError,
 };
+
+/// How long after receiving an image the monitor may still see our own write
+/// of it. Duplicate clipboard events arrive within a second; this leaves room
+/// for slow machines without blocking a deliberate re-copy for long.
+const IMAGE_ECHO_WINDOW: Duration = Duration::from_secs(5);
 
 /// Puts a received clip on the system clipboard.
 pub type ApplyClip = Arc<dyn Fn(ClipPayload) + Send + Sync>;
@@ -78,6 +84,9 @@ pub struct SyncService {
     /// Text of the last received clip. Writing it to the clipboard makes the
     /// monitor see it as a new copy; this stops that one copy being sent back.
     last_received: Mutex<Option<String>>,
+    /// Pixel hash of the last received image and when it arrived. See
+    /// `take_image_echo`.
+    last_received_image: Mutex<Option<(String, Instant)>>,
     hooks: SyncHooks,
 }
 
@@ -95,6 +104,7 @@ impl SyncService {
             is_pairing: AtomicBool::new(false),
             accepts_pairing: AtomicBool::new(false),
             last_received: Mutex::new(None),
+            last_received_image: Mutex::new(None),
             hooks,
         })
     }
@@ -121,15 +131,70 @@ impl SyncService {
         if is_echo {
             return 0;
         }
+        self.send_to_peers(|device_id, key| {
+            Ok(Outgoing {
+                frame: Frame::seal_clip(device_id, key, &clip)?,
+                body: None,
+            })
+        })
+        .await
+    }
 
+    /// Send a copied image to every paired device, like `broadcast`. The
+    /// monitor checks `take_image_echo` first, before even storing it.
+    pub async fn broadcast_image(&self, png: &[u8], details: ImageDetails) -> usize {
+        if png.len() > MAX_IMAGE_BYTES {
+            eprintln!(
+                "Not syncing a {} MB image: the limit is {} MB",
+                png.len() / (1024 * 1024),
+                MAX_IMAGE_BYTES / (1024 * 1024)
+            );
+            return 0;
+        }
+        self.send_to_peers(|device_id, key| {
+            let (frame, body) = seal_image(device_id, key, details, png)?;
+            Ok(Outgoing {
+                frame,
+                body: Some(body),
+            })
+        })
+        .await
+    }
+
+    /// Whether an image the monitor just saw on the clipboard is one this
+    /// device wrote there after receiving it. Consumed on a match, and only
+    /// counts for a few seconds: when the monitor's skip works, it never sees
+    /// the write, and a later copy of the same picture by the user must sync.
+    pub fn take_image_echo(&self, pixel_hash: &str) -> bool {
+        self.take_image_echo_at(pixel_hash, Instant::now())
+    }
+
+    /// `take_image_echo` as of `now`, so the expiry can be tested exactly.
+    fn take_image_echo_at(&self, pixel_hash: &str, now: Instant) -> bool {
+        let mut last = lock(&self.last_received_image);
+        let is_echo = last.as_ref().is_some_and(|(hash, received_at)| {
+            hash == pixel_hash && now.duration_since(*received_at) < IMAGE_ECHO_WINDOW
+        });
+        if is_echo {
+            *last = None;
+        }
+        is_echo
+    }
+
+    /// Seal once per paired device (fresh nonce each) and deliver to all of
+    /// them at once. Returns how many devices it reached.
+    async fn send_to_peers(
+        &self,
+        seal: impl Fn(&str, &PeerKey) -> Result<Outgoing, SyncError>,
+    ) -> usize {
         let mut sends = JoinSet::new();
         {
             let store = lock(&self.store);
             for peer in &store.peers {
-                let frame = match Frame::seal_clip(&store.device_id, &peer.key, &clip) {
-                    Ok(frame) => frame,
+                let outgoing = match seal(&store.device_id, &peer.key) {
+                    Ok(outgoing) => outgoing,
                     Err(e) => {
-                        eprintln!("Could not seal clip for {}: {e}", peer.id);
+                        eprintln!("Could not seal for {}: {e}", peer.id);
                         continue;
                     }
                 };
@@ -137,7 +202,7 @@ impl SyncService {
                 let last_addr = peer.last_addr.clone();
                 let resolve_addr = self.hooks.resolve_addr.clone();
                 sends.spawn(async move {
-                    let delivery = deliver(&peer_id, last_addr, &frame, &resolve_addr).await;
+                    let delivery = deliver(&peer_id, last_addr, &outgoing, &resolve_addr).await;
                     (peer_id, delivery)
                 });
             }
@@ -310,6 +375,7 @@ impl SyncService {
         };
 
         self.learn_ip(from, from_addr.ip());
+        *lock(&self.last_received_image) = Some((decoded.pixel_hash.clone(), Instant::now()));
         (self.hooks.apply_image)(ReceivedImage {
             png,
             meta,
@@ -392,14 +458,31 @@ enum Delivery {
     Missed,
 }
 
+/// A sealed frame, and for images the body that follows it.
+struct Outgoing {
+    frame: Frame,
+    body: Option<Vec<u8>>,
+}
+
+async fn send(addr: &str, outgoing: &Outgoing) -> std::io::Result<()> {
+    let Some(body) = &outgoing.body else {
+        return transport::send_frame(addr, &outgoing.frame).await;
+    };
+    let mut stream = transport::connect(addr).await?;
+    tokio::time::timeout(Duration::from_secs(5), transport::write_frame(&mut stream, &outgoing.frame))
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "send timed out"))??;
+    write_body(&mut stream, body, IMAGE_BODY_LIMITS).await
+}
+
 async fn deliver(
     peer_id: &str,
     last_addr: Option<String>,
-    frame: &Frame,
+    outgoing: &Outgoing,
     resolve_addr: &ResolveAddr,
 ) -> Delivery {
     if let Some(addr) = &last_addr {
-        match transport::send_frame(addr, frame).await {
+        match send(addr, outgoing).await {
             Ok(()) => return Delivery::Reached,
             Err(e) => eprintln!("Could not reach {peer_id} at {addr}: {e}"),
         }
@@ -412,7 +495,7 @@ async fn deliver(
         // Discovery agrees with the address that just failed; it's offline.
         return Delivery::Missed;
     }
-    match transport::send_frame(&found, frame).await {
+    match send(&found, outgoing).await {
         Ok(()) => Delivery::ReachedAt(found),
         Err(e) => {
             eprintln!("Could not reach {peer_id} at {found} either: {e}");
@@ -438,7 +521,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, time::Duration};
+    use std::collections::HashMap;
 
     use tokio::sync::mpsc;
 
@@ -794,6 +877,99 @@ mod tests {
             lock(&b.service.store).peer("a").unwrap().last_addr,
             Some(addr_a.to_string())
         );
+    }
+
+    fn details(width: u32, height: u32) -> ImageDetails {
+        ImageDetails {
+            width,
+            height,
+            is_screenshot: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn broadcast_image_arrives_at_the_other_device() {
+        let (a, mut b) = paired_devices().await;
+        a.service.broadcast_image(&png_of(4, 3), details(4, 3)).await;
+
+        assert_eq!(next_image(&mut b).await.map(|image| image.png), Some(png_of(4, 3)));
+    }
+
+    #[tokio::test]
+    async fn broadcast_image_reports_the_devices_it_reached() {
+        let (a, _b) = paired_devices().await;
+        assert_eq!(a.service.broadcast_image(&png_of(4, 3), details(4, 3)).await, 1);
+    }
+
+    #[tokio::test]
+    async fn oversized_image_is_not_sent() {
+        let (a, _b) = paired_devices().await;
+        let too_big = vec![0u8; MAX_IMAGE_BYTES + 1];
+
+        assert_eq!(a.service.broadcast_image(&too_big, details(4, 3)).await, 0);
+    }
+
+    #[tokio::test]
+    async fn image_reaches_a_device_that_moved_through_lookup() {
+        let (a, mut b) = a_with_stale_address_for_b(Some(dead_addr().await)).await;
+        lock(&a.network).insert("b".into(), b.addr);
+        a.service.broadcast_image(&png_of(4, 3), details(4, 3)).await;
+
+        assert_eq!(next_image(&mut b).await.map(|image| image.png), Some(png_of(4, 3)));
+    }
+
+    #[tokio::test]
+    async fn received_image_is_recognized_as_an_echo() {
+        let (a, mut b) = paired_devices().await;
+        a.service.broadcast_image(&png_of(4, 3), details(4, 3)).await;
+        let received = next_image(&mut b).await.unwrap();
+
+        assert!(b.service.take_image_echo(&received.pixel_hash));
+    }
+
+    #[tokio::test]
+    async fn image_echo_is_only_suppressed_once() {
+        let (a, mut b) = paired_devices().await;
+        a.service.broadcast_image(&png_of(4, 3), details(4, 3)).await;
+        let received = next_image(&mut b).await.unwrap();
+        b.service.take_image_echo(&received.pixel_hash);
+
+        assert!(!b.service.take_image_echo(&received.pixel_hash));
+    }
+
+    #[tokio::test]
+    async fn a_different_image_is_not_an_echo() {
+        let (a, mut b) = paired_devices().await;
+        a.service.broadcast_image(&png_of(4, 3), details(4, 3)).await;
+        next_image(&mut b).await.unwrap();
+        let other = image::RgbaImage::from_pixel(5, 5, image::Rgba([1, 2, 3, 255]));
+
+        assert!(!b
+            .service
+            .take_image_echo(&crate::sync::image::pixel_hash(5, 5, other.as_raw())));
+    }
+
+    #[tokio::test]
+    async fn image_echo_expires() {
+        // When the monitor's skip works it never sees our write, so a copy of
+        // the same picture later on must not be mistaken for an echo.
+        let (a, mut b) = paired_devices().await;
+        a.service.broadcast_image(&png_of(4, 3), details(4, 3)).await;
+        let received = next_image(&mut b).await.unwrap();
+        let later = Instant::now() + IMAGE_ECHO_WINDOW;
+
+        assert!(!b.service.take_image_echo_at(&received.pixel_hash, later));
+    }
+
+    #[tokio::test]
+    async fn text_and_image_echo_guards_are_independent() {
+        let (a, mut b) = paired_devices().await;
+        a.service.broadcast(clip("ping")).await;
+        next_clip(&mut b).await;
+        a.service.broadcast_image(&png_of(4, 3), details(4, 3)).await;
+        next_image(&mut b).await;
+
+        assert_eq!(b.service.broadcast(clip("ping")).await, 0);
     }
 
     #[tokio::test]
