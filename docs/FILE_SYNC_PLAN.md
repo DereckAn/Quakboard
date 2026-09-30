@@ -4,7 +4,7 @@
 
 ## Goal
 Files are **not** synced automatically; you choose which ones to share.
-1. On the computer that has the file, the content viewer shows a **Send** button next to "Copy file to clipboard". Clicking it **offers** the file to all paired devices.
+1. On the computer that has the file, the content viewer shows a **Send** button next to "Copy file to clipboard". Clicking it opens a **device picker**, and the file is **offered** to the devices you choose.
 2. On the other devices, the file appears in the item list right away, **as information only**: name, size, type, and which device has it. No bytes are transferred yet.
 3. Opening that item shows a **Fetch** button. Clicking it downloads the file from the device that offered it.
 4. When a device already has the file, identified by content hash, **Fetch is hidden** and the normal Open / Copy buttons show instead.
@@ -20,13 +20,13 @@ The bytes only move when someone asks for them, so offering a 2 GB video to 5 co
 ## Design
 
 ### Offers (the owner's side)
-- **Stored** in a new `sync_offers` table: `{ offer_id (uuid), item_id, path, size, mtime, sha256, created_at }`. Offers survive restarts, so a fetch the next day still works.
-- **Send** (`sync_send_file(item_id)`):
+- **Stored** in a new `sync_offers` table: `{ offer_id (uuid), item_id, path, size, mtime, sha256, offered_to (device ids), created_at }`. Offers survive restarts, so a fetch the next day still works.
+- **Send** (`sync_send_file(item_id, device_ids)`, called by the picker):
   1. Resolve the item's `external_path`.
   2. Compute the SHA-256 in a background thread, reporting progress for big files.
   3. Store the offer.
-  4. Seal `FileOffer { offer_id, name, size, mime, sha256 }` to each paired device and send it with the existing `deliver`.
-- **Revoked** when the item is deleted, or with a later "Stop sharing" action. It could also expire after 30 days (a decision to confirm).
+  4. Seal `FileOffer { offer_id, name, size, mime, sha256 }` to **each chosen device** and send it with the existing `deliver`.
+- **Revoked** when the item is deleted, or with a "Stop sharing" action. Offers never expire otherwise.
 - **Offline devices miss the offer** (there's no queue), the same as clips. The owner can press Send again later. ponytail: re-send pending offers when a device comes back if that turns out to matter.
 
 ### Remote items (the receiving side)
@@ -82,8 +82,14 @@ The bytes only move when someone asks for them, so offering a 2 GB video to 5 co
 7. **Cross-platform file clipboard,** or hiding the button on Linux and Windows.
 8. **Manual test:** a 1 KB file, a 500 MB file, and 2+ GB with the warning; fetching while the owner goes offline; changing the file after sending; three devices.
 
-## Decisions to confirm
-- Should offers expire (30 days suggested), or live until the item is deleted?
-- Should Send offer to **all** paired devices (planned), or open a picker? A picker is easy to add later.
-- Is the download folder `Downloads/Quakboard` right, or should it be the app data folder?
-- Should fetching also put the file on the clipboard (like text and images), or only store it?
+## Decisions (confirmed)
+1. **Offers never expire.** An offer lives until its item is deleted on the offering device, or the user stops sharing it. There's no 30-day expiry.
+2. **Send opens a device picker.** You choose which paired devices get the offer, not all of them.
+   - The picker lists paired devices and whether each one is reachable right now.
+   - Only the chosen devices receive `FileOffer`.
+   - The offer records who it was sent to. **Fetch is only served to those devices**, and anyone else gets "not offered to you".
+3. **The download folder is configurable.** The default is `<Downloads>/Quakboard/`, with a setting to choose another folder (a folder picker via `tauri-plugin-dialog`, already a dependency). Name cleaning and "stays inside the chosen folder" apply to whatever folder is set.
+4. **A fetched file also goes on the clipboard, as a file**, the way it would on the original device, so it can be pasted into a file manager or chat app straight away. That makes the cross-platform file clipboard (step 7) **required** for v1.5.2, not optional:
+   - Linux: `text/uri-list`
+   - Windows: `CF_HDROP`
+   - macOS: already works

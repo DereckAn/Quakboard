@@ -14,6 +14,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub mod body;
 pub mod discovery;
+pub mod image;
 pub mod pairing;
 pub mod runtime;
 pub mod service;
@@ -48,6 +49,8 @@ pub enum Frame {
     PairAccept { spake_msg: String, sealed: Sealed },
     PairFinish { sealed: Sealed },
     PairDone,
+    /// Followed on the same connection by the encrypted PNG as a raw body.
+    Image { from: String, meta: Sealed },
 }
 
 #[derive(Debug, PartialEq)]
@@ -56,6 +59,8 @@ pub enum SyncError {
     Malformed(String),
     /// Wrong key, wrong sender, or tampered ciphertext.
     Decrypt,
+    /// Decrypted fine, but the content doesn't match what its header claims.
+    Integrity(String),
 }
 
 impl fmt::Display for SyncError {
@@ -63,6 +68,7 @@ impl fmt::Display for SyncError {
         match self {
             SyncError::Malformed(reason) => write!(f, "malformed sync frame: {reason}"),
             SyncError::Decrypt => write!(f, "sync frame failed to decrypt"),
+            SyncError::Integrity(reason) => write!(f, "sync payload failed its check: {reason}"),
         }
     }
 }
