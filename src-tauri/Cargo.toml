@@ -68,6 +68,7 @@ chacha20poly1305 = "0.11"
 base64 = "0.22"
 spake2 = "0.4"
 getrandom = "0.3"
+mdns-sd = "0.21.4"
 
 # Test dependencies
 [dev-dependencies]

@@ -19,6 +19,7 @@ use tokio::{
 };
 
 use super::{
+    discovery::Discovery,
     pairing::{self, LocalDevice, PairError},
     store::{Peer, SyncStore, STORE_FILE_NAME},
     transport::{self, SYNC_PORT},
@@ -288,17 +289,30 @@ pub fn start(app: &AppHandle, app_data_dir: &Path) -> Result<(), String> {
             }
         }),
     };
+    let device_id = store.device_id.clone();
     let service = SyncService::new(store, store_path, SYNC_PORT, hooks);
     app.manage(service.clone());
 
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        match TcpListener::bind(("0.0.0.0", SYNC_PORT)).await {
-            Ok(listener) => {
-                println!("Sync listening on port {SYNC_PORT}");
-                service.listen(listener).await;
+        let listener = match TcpListener::bind(("0.0.0.0", SYNC_PORT)).await {
+            Ok(listener) => listener,
+            Err(e) => {
+                eprintln!("Sync could not listen on port {SYNC_PORT}: {e}");
+                return;
             }
-            Err(e) => eprintln!("Sync could not listen on port {SYNC_PORT}: {e}"),
+        };
+        println!("Sync listening on port {SYNC_PORT}");
+
+        // Only advertise once there is a listener to reach.
+        match Discovery::start(&device_id, SYNC_PORT) {
+            Ok(discovery) => {
+                app.manage(discovery);
+            }
+            Err(e) => eprintln!("Sync discovery unavailable, connect by IP instead: {e}"),
         }
+
+        service.listen(listener).await;
     });
 
     Ok(())
