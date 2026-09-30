@@ -12,7 +12,7 @@ When you copy an image (a screenshot, "Copy image" in a browser, an image copied
 
 ## Scope
 - **In:** images that arrive as **pixels on the clipboard**, the monitor's `ClipboardContent::Image` branch.
-- **Out:** image *files* copied in a file manager (the `ImageFile` branch). Those follow the file flow in v1.5.2.
+- **Out:** image *files* copied in a file manager (the `ImageFile` branch). Those are shared manually through file sharing (v1.5.2). An optional "sync copied image files automatically" switch is planned for v1.5.3 (see [FILE_SYNC_PLAN.md](FILE_SYNC_PLAN.md#later-image-files-after-file-sharing-ships)).
 - **Also out:** GIF/animated images (only the first frame reaches the clipboard anyway), and a queue for offline devices.
 
 ## What exists and what to reuse

@@ -134,7 +134,7 @@ impl SyncService {
         if is_echo {
             return 0;
         }
-        self.send_to_peers(|device_id, key| {
+        self.send_to_peers("text", |device_id, key| {
             Ok(Outgoing {
                 frame: Frame::seal_clip(device_id, key, &clip)?,
                 body: None,
@@ -157,7 +157,7 @@ impl SyncService {
             );
             return 0;
         }
-        self.send_to_peers(|device_id, key| {
+        self.send_to_peers("image", |device_id, key| {
             let (frame, body) = seal_image(device_id, key, details, png)?;
             Ok(Outgoing {
                 frame,
@@ -191,6 +191,7 @@ impl SyncService {
     /// them at once. Returns how many devices it reached.
     async fn send_to_peers(
         &self,
+        kind: &str,
         seal: impl Fn(&str, &PeerKey) -> Result<Outgoing, SyncError>,
     ) -> usize {
         let mut sends = JoinSet::new();
@@ -224,6 +225,11 @@ impl SyncService {
                 }
                 Delivery::Missed => {}
             }
+        }
+        // Counts only: clip contents can be passwords and never get logged.
+        let paired = lock(&self.store).peers.len();
+        if paired > 0 {
+            println!("Sync sent {kind} to {reached} of {paired} paired device(s)");
         }
         reached
     }
@@ -396,6 +402,12 @@ impl SyncService {
 
         self.learn_ip(from, from_addr.ip());
         *lock(&self.last_received_image) = Some((decoded.pixel_hash.clone(), Instant::now()));
+        println!(
+            "Sync received image {}x{} ({} KB) from {from_name}",
+            meta.width,
+            meta.height,
+            meta.byte_len / 1024
+        );
         (self.hooks.apply_image)(ReceivedImage {
             png,
             meta,
@@ -420,6 +432,11 @@ impl SyncService {
                 *lock(&self.last_received) = Some(clip.text.clone());
                 // Decrypting proved the sender, so its current IP is trustworthy.
                 self.learn_ip(from, from_addr.ip());
+                let from_name = lock(&self.store).peer(from).map(|p| p.name.clone());
+                println!(
+                    "Sync received text from {}",
+                    from_name.as_deref().unwrap_or(from)
+                );
                 (self.hooks.apply_clip)(clip);
             }
             Err(e) => eprintln!("Dropped clip from {from} at {from_addr}: {e}"),

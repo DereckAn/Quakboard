@@ -17,6 +17,14 @@ The bytes only move when someone asks for them, so offering a 2 GB video to 5 co
 - **The file changed after it was sent:** the owner re-checks size and modification time before serving, and re-hashes if they changed. If the content differs, the fetch is refused with "File changed on Laptop; send it again". It never silently serves different bytes.
 - **The owner is offline:** the item says "Unavailable: Laptop is offline", with a retry, instead of a Fetch button that just fails.
 
+## Rule: never touch the user's files
+The clipboard history stores **pointers** to the user's own files, not copies (`copy_image_file_to_storage`, `prepare_file_metadata`). Until the fix in 1.5.x, a duplicate check deleted that pointer's path, which permanently deleted users' original pictures (shipped v1.2.0–v1.5.0).
+
+For everything in this plan:
+- **Delete** only files the app created itself: fetched files it wrote, `.partial` downloads, thumbnails. **Never** a path that came from the user's clipboard or an offer.
+- **Never overwrite:** a fetched file gets a new name (` (1)`, …) rather than replacing an existing one.
+- **Tests:** every code path that removes a file gets a test proving a user's original survives it, like `copied_image_file_is_stored_as_a_pointer_to_the_original` and `delete_image_assets_keeps_original_when_source_is_file`.
+
 ## Design
 
 ### Offers (the owner's side)
@@ -93,3 +101,17 @@ The bytes only move when someone asks for them, so offering a 2 GB video to 5 co
    - Linux: `text/uri-list`
    - Windows: `CF_HDROP`
    - macOS: already works
+
+## Later: image files (after file sharing ships)
+**Decided:** an image *file* copied in a file manager (png, jpg, webp…) is a file like any other in v1.5.2. It is shared **manually** (Send, then Fetch), and nothing syncs automatically.
+
+A later release (planned as **v1.5.3**) adds settings in the Devices section:
+1. **"Sync copied image files automatically" (on/off).** When on, copying an image file sends its pixels like a screenshot:
+   - Read the file, and convert it to PNG if it isn't one, off the async workers.
+   - Reuse `broadcast_image`, with the same 20 MB limit (checked after conversion) and the same echo guard.
+   - Skip formats the `image` crate can't read (HEIC and others), with a log message.
+   - The other device gets a pasteable image, not a file.
+2. **"Fetch the original" for synced images.** An image that arrived as pixels can also fetch the original file (full quality, original format and name) through the file-sharing Fetch flow.
+   - This needs the sender to create an offer for that file when it syncs the pixels. Tie them together with the file's full SHA-256.
+
+Open question: whether "offer the original" should follow the same device picker as Send, or go to every device that received the pixels.
