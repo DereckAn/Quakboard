@@ -6,6 +6,10 @@ mod colors;
 mod commands;
 mod db;
 mod shortcuts;
+// NOTE: LAN sync is built in steps (docs/LAN_SYNC_PLAN.md); nothing calls it
+// until the transport lands in step 3. Drop this allow then.
+#[allow(dead_code)]
+mod sync;
 
 use clipboard::{spawn_clipboard_listener, ClipboardMonitor};
 use commands::AppState;

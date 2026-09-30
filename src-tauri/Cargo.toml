@@ -64,6 +64,8 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 enigo = "0.6.1"
 libc = "0.2.186"
+chacha20poly1305 = "0.11"
+base64 = "0.22"
 
 # Test dependencies
 [dev-dependencies]
