@@ -12,6 +12,7 @@ use chacha20poly1305::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+pub mod body;
 pub mod discovery;
 pub mod pairing;
 pub mod runtime;
