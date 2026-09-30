@@ -160,6 +160,19 @@ pub fn decode_png(png: &[u8], meta: &ImageMeta) -> Result<DecodedImage, SyncErro
     })
 }
 
+/// Encode clipboard pixels (8-bit RGBA, row by row) as a PNG in memory, for
+/// sending an image that isn't saved locally. CPU-heavy for big images:
+/// callers run it off the async workers.
+pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, SyncError> {
+    let image = image::RgbaImage::from_raw(width, height, rgba.to_vec())
+        .ok_or_else(|| SyncError::Malformed("pixel buffer doesn't match its size".into()))?;
+    let mut png = Vec::new();
+    image::DynamicImage::from(image)
+        .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+        .map_err(|e| SyncError::Malformed(format!("could not encode PNG: {e}")))?;
+    Ok(png)
+}
+
 /// Identifies an image by its pixels rather than its file bytes: the same
 /// picture re-encoded on its way through a clipboard keeps its pixel hash.
 /// `rgba` is 8-bit RGBA, row by row, as `arboard::ImageData` holds it.
@@ -560,6 +573,22 @@ mod tests {
     #[test]
     fn same_bytes_at_another_size_have_another_pixel_hash() {
         assert_ne!(pixel_hash(2, 3, &rgba_pixels()), pixel_hash(3, 2, &rgba_pixels()));
+    }
+
+    #[test]
+    fn encoded_png_decodes_to_the_same_pixels() {
+        let png = encode_png(3, 2, &rgba_pixels()).unwrap();
+        let decoded = decode_png(&png, &meta_for(3, 2)).unwrap();
+
+        assert_eq!(decoded.pixel_hash, pixel_hash(3, 2, &rgba_pixels()));
+    }
+
+    #[test]
+    fn pixels_that_do_not_fill_the_size_are_rejected() {
+        assert!(matches!(
+            encode_png(3, 3, &rgba_pixels()),
+            Err(SyncError::Malformed(_))
+        ));
     }
 
     #[test]

@@ -11,7 +11,7 @@ use crate::db::models::CreateClipboardItemDto;
 use crate::db::repository::ClipboardRepository;
 use crate::clipboard::image_handler::StoredImageInfo;
 use crate::sync::{
-    image::{pixel_hash, ImageDetails},
+    image::{encode_png, pixel_hash, ImageDetails},
     runtime::SyncRuntime,
     service::SyncService,
     ClipPayload,
@@ -319,12 +319,6 @@ impl ClipboardMonitor {
                 }
             }
             Ok(ClipboardContent::Image(image_data, screenshot_hint)) => {
-                // When the capture-folder watcher is active it stores screenshots
-                // as pointers, so skip saving the raw bytes to avoid a duplicate.
-                if state::should_suppress_screenshot_bytes() {
-                    return;
-                }
-
                 use std::collections::hash_map::DefaultHasher;
                 use std::hash::{Hash, Hasher};
 
@@ -361,6 +355,16 @@ impl ClipboardMonitor {
                     if sync.take_image_echo(&hash) {
                         return;
                     }
+                }
+
+                // When the capture-folder watcher is active it stores screenshots
+                // as pointers, so skip saving the raw bytes to avoid a duplicate.
+                // Paired devices have no such file, so still send them the image.
+                if state::should_suppress_screenshot_bytes() {
+                    if let Some(sync) = sync {
+                        sync_pixels(sync, image_data, screenshot_hint);
+                    }
+                    return;
                 }
 
                 match save_image_to_disk(&image_data, &self.images_dir, screenshot_hint) {
@@ -716,6 +720,30 @@ fn sync_image(sync: Option<Arc<SyncService>>, png_path: std::path::PathBuf, deta
                 sync.broadcast_image(&png, details).await;
             }
             Err(e) => eprintln!("Could not read image to sync {}: {e}", png_path.display()),
+        }
+    });
+}
+
+/// Send an image that isn't saved locally (the folder watcher stores it as a
+/// file instead): encode its pixels to PNG in memory, then broadcast.
+fn sync_pixels(sync: Arc<SyncService>, image: arboard::ImageData<'static>, is_screenshot: bool) {
+    let details = ImageDetails {
+        width: image.width as u32,
+        height: image.height as u32,
+        is_screenshot,
+    };
+    tauri::async_runtime::spawn(async move {
+        // PNG encoding takes real CPU for big screenshots.
+        let encoded = tauri::async_runtime::spawn_blocking(move || {
+            encode_png(details.width, details.height, &image.bytes)
+        })
+        .await;
+        match encoded {
+            Ok(Ok(png)) => {
+                sync.broadcast_image(&png, details).await;
+            }
+            Ok(Err(e)) => eprintln!("Could not encode image to sync: {e}"),
+            Err(e) => eprintln!("Image encoding for sync failed to run: {e}"),
         }
     });
 }
