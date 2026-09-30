@@ -69,13 +69,13 @@ jobs:
           RUSTUP_HOME: ${{ runner.temp }}/rustup
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       - name: Cache cargo index
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -106,7 +106,7 @@ jobs:
 
       - name: Restore cached build
         id: cache-frontend
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: build
           key: svelte-build-${{ steps.frontend-hash.outputs.hash }}
@@ -128,7 +128,7 @@ jobs:
         run: bun run build
 
       - name: Upload frontend artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-build
           path: build
@@ -164,7 +164,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Download frontend bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-build
           path: build
@@ -294,7 +294,7 @@ jobs:
           echo "Hardened AppImage written: $APPIMAGE"
 
       - name: Upload bundle artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tauri-${{ matrix.target }}
           path: |
@@ -312,7 +312,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
