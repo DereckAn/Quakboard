@@ -320,6 +320,21 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
+    fn copied_image_file_is_stored_as_a_pointer_to_the_original() {
+        // Pointer mode means `full_path` IS the user's file: any cleanup that
+        // deletes `full_path` after this call deletes their original.
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("photo.png");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255]))
+            .save(&original)
+            .unwrap();
+
+        let info = copy_image_file_to_storage(&original, &dir.path().join("images")).unwrap();
+
+        assert_eq!(info.full_path, original);
+    }
+
+    #[test]
     fn detect_mime_type_handles_common_extensions() {
         assert_eq!(detect_mime_type("photo.JPG"), "image/jpeg");
         assert_eq!(detect_mime_type("icon.svg"), "image/svg+xml");

@@ -146,8 +146,9 @@ impl ClipboardMonitor {
                                     }
                                 }
 
-                                let _ = std::fs::remove_file(&info.full_path);
-                                let _ = std::fs::remove_file(&info.thumb_path);
+                                // NOTE: never delete `info.full_path` here. In pointer mode
+                                // (`copy_image_file_to_storage`) it IS the user's original
+                                // file, not a copy of ours; nothing was created to clean up.
                                 return;
                             }
                         }
