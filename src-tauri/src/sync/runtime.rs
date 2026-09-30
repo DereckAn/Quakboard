@@ -7,15 +7,20 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use tauri::{async_runtime::JoinHandle, AppHandle, Emitter};
+use tauri::{async_runtime::JoinHandle, AppHandle, Emitter, Manager};
 use tokio::{net::TcpListener, sync::oneshot};
 
 use super::{
     discovery::{DiscoveredDevice, Discovery},
-    service::{SyncHooks, SyncService},
+    received::store_received_image,
+    service::{ReceivedImage, SyncHooks, SyncService},
     store::{SyncStore, STORE_FILE_NAME},
     transport::SYNC_PORT,
     ClipPayload,
+};
+use crate::{
+    clipboard::operations::write_clipboard_image, commands::AppState,
+    db::repository::ClipboardRepository,
 };
 
 pub const SETTING_KEY: &str = "syncEnabled";
@@ -192,6 +197,7 @@ pub fn local_addresses() -> Vec<String> {
 
 fn hooks(app: &AppHandle, discovery: Option<Arc<Discovery>>) -> SyncHooks {
     let event_app = app.clone();
+    let image_app = app.clone();
     SyncHooks {
         apply_clip: Arc::new(|clip: ClipPayload| {
             // Writing spawns wl-copy / talks to the OS clipboard; keep it off
@@ -202,6 +208,11 @@ fn hooks(app: &AppHandle, discovery: Option<Arc<Discovery>>) -> SyncHooks {
                 }
             });
         }),
+        apply_image: Arc::new(move |image: ReceivedImage| {
+            let app = image_app.clone();
+            // File and database work; keep it off the async workers.
+            tauri::async_runtime::spawn_blocking(move || apply_received_image(&app, image));
+        }),
         on_pairing: Arc::new(move |event| {
             if let Err(e) = event_app.emit("sync-pairing", event) {
                 eprintln!("Failed to emit sync-pairing event: {e}");
@@ -210,6 +221,42 @@ fn hooks(app: &AppHandle, discovery: Option<Arc<Discovery>>) -> SyncHooks {
         resolve_addr: Arc::new(move |device_id| {
             discovery.as_ref().and_then(|d| d.address_of(device_id))
         }),
+    }
+}
+
+/// Store a received image in history, show it, and put it on the clipboard.
+fn apply_received_image(app: &AppHandle, image: ReceivedImage) {
+    let (db_path, images_dir) = {
+        let state = app.state::<Mutex<AppState>>();
+        let state = lock(&state);
+        (state.db_path.clone(), state.images_dir.clone())
+    };
+    let stored = ClipboardRepository::new(&db_path)
+        .map_err(|e| format!("Failed to open history: {e}"))
+        .and_then(|repo| {
+            store_received_image(
+                &repo,
+                Path::new(&images_dir),
+                &image.png,
+                &image.meta,
+                &image.from_name,
+            )
+        });
+    let stored = match stored {
+        Ok(stored) => stored,
+        Err(e) => {
+            eprintln!("Failed to store image from {}: {e}", image.from_name);
+            return;
+        }
+    };
+
+    if let Err(e) = app.emit("clipboard-item-added", &stored.item) {
+        eprintln!("Failed to emit clipboard-item-added event: {e}");
+    }
+    // write_clipboard_image asks the monitor to skip its own write, so the
+    // image isn't stored again here or sent back (see docs/IMAGE_SYNC_PLAN.md).
+    if let Err(e) = write_clipboard_image(&stored.path.to_string_lossy()) {
+        eprintln!("Failed to put synced image on the clipboard: {e}");
     }
 }
 

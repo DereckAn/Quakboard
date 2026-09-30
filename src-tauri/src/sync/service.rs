@@ -18,6 +18,8 @@ use tokio::{
 };
 
 use super::{
+    body::{read_body, IMAGE_BODY_LIMITS},
+    image::{decode_png, open_image, ImageMeta},
     pairing::{self, LocalDevice, PairError},
     store::{Peer, StoreError, SyncStore},
     transport, ClipPayload, Frame,
@@ -25,6 +27,8 @@ use super::{
 
 /// Puts a received clip on the system clipboard.
 pub type ApplyClip = Arc<dyn Fn(ClipPayload) + Send + Sync>;
+/// Stores a received, verified image and puts it on the system clipboard.
+pub type ApplyImage = Arc<dyn Fn(ReceivedImage) + Send + Sync>;
 /// Tells the UI what pairing is doing.
 pub type OnPairing = Arc<dyn Fn(PairingEvent) + Send + Sync>;
 /// Looks a device up on the network by id (mDNS), for when its last address fails.
@@ -34,8 +38,21 @@ pub type ResolveAddr = Arc<dyn Fn(&str) -> Option<SocketAddr> + Send + Sync>;
 /// the real clipboard, UI or network discovery.
 pub struct SyncHooks {
     pub apply_clip: ApplyClip,
+    pub apply_image: ApplyImage,
     pub on_pairing: OnPairing,
     pub resolve_addr: ResolveAddr,
+}
+
+/// An image from a paired device that decrypted, matched its header and
+/// decoded safely.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReceivedImage {
+    pub png: Vec<u8>,
+    pub meta: ImageMeta,
+    /// See `image::pixel_hash`; the echo guard compares it.
+    pub pixel_hash: String,
+    /// The sender's name as stored at pairing, for "Synced from …".
+    pub from_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -223,6 +240,7 @@ impl SyncService {
     async fn handle_connection(&self, frame: Frame, mut stream: TcpStream, addr: SocketAddr) {
         match frame {
             Frame::Clip { .. } => self.handle_clip(frame, addr),
+            Frame::Image { .. } => self.handle_image(frame, &mut stream, addr).await,
             Frame::PairRequest { from } => {
                 if !self.accepts_pairing.load(Ordering::SeqCst) {
                     eprintln!("Ignored pairing request from {addr}: Devices screen not open");
@@ -244,6 +262,60 @@ impl SyncService {
             }
             _ => eprintln!("Dropped unexpected first frame from {addr}"),
         }
+    }
+
+    async fn handle_image(&self, frame: Frame, stream: &mut TcpStream, from_addr: SocketAddr) {
+        let Frame::Image { from, .. } = &frame else {
+            return;
+        };
+        // Check the sender before reading the body, so an unpaired device
+        // can't make us download 20 MB just to throw it away.
+        let peer = lock(&self.store).peer(from).map(|p| (p.key, p.name.clone()));
+        let Some((key, from_name)) = peer else {
+            eprintln!("Dropped image from unpaired device at {from_addr}");
+            return;
+        };
+
+        let body = match read_body(stream, IMAGE_BODY_LIMITS).await {
+            Ok(body) => body,
+            Err(e) => {
+                eprintln!("Dropped image from {from} at {from_addr}: {e}");
+                return;
+            }
+        };
+        let (meta, png) = match open_image(&frame, &body, &key) {
+            Ok(opened) => opened,
+            Err(e) => {
+                eprintln!("Dropped image from {from} at {from_addr}: {e}");
+                return;
+            }
+        };
+        drop(body);
+
+        // Decoding a large image takes real CPU; keep it off the async workers.
+        let decoded = tokio::task::spawn_blocking(move || {
+            decode_png(&png, &meta).map(|decoded| (png, meta, decoded))
+        })
+        .await;
+        let (png, meta, decoded) = match decoded {
+            Ok(Ok(decoded)) => decoded,
+            Ok(Err(e)) => {
+                eprintln!("Dropped image from {from} at {from_addr}: {e}");
+                return;
+            }
+            Err(e) => {
+                eprintln!("Image decoding for {from} failed to run: {e}");
+                return;
+            }
+        };
+
+        self.learn_ip(from, from_addr.ip());
+        (self.hooks.apply_image)(ReceivedImage {
+            png,
+            meta,
+            pixel_hash: decoded.pixel_hash,
+            from_name,
+        });
     }
 
     fn handle_clip(&self, frame: Frame, from_addr: SocketAddr) {
@@ -380,6 +452,7 @@ mod tests {
     struct Device {
         service: Arc<SyncService>,
         received: mpsc::UnboundedReceiver<ClipPayload>,
+        images: mpsc::UnboundedReceiver<ReceivedImage>,
         events: mpsc::UnboundedReceiver<PairingEvent>,
         addr: SocketAddr,
         store_path: PathBuf,
@@ -411,6 +484,7 @@ mod tests {
         let store_path = dir.path().join(STORE_FILE_NAME);
         let (clip_tx, received) = mpsc::unbounded_channel();
         let (event_tx, events) = mpsc::unbounded_channel();
+        let (image_tx, images) = mpsc::unbounded_channel();
         let store = SyncStore {
             device_id: id.into(),
             device_name: format!("{id} name"),
@@ -421,6 +495,9 @@ mod tests {
         let hooks = SyncHooks {
             apply_clip: Arc::new(move |clip| {
                 let _ = clip_tx.send(clip);
+            }),
+            apply_image: Arc::new(move |image| {
+                let _ = image_tx.send(image);
             }),
             on_pairing: Arc::new(move |event| {
                 let _ = event_tx.send(event);
@@ -434,6 +511,7 @@ mod tests {
         Device {
             service,
             received,
+            images,
             events,
             addr,
             store_path,
@@ -618,6 +696,106 @@ mod tests {
         );
     }
 
+    fn png_of(width: u32, height: u32) -> Vec<u8> {
+        let image = image::RgbaImage::from_pixel(width, height, image::Rgba([10, 200, 60, 255]));
+        let mut bytes = Vec::new();
+        image::DynamicImage::from(image)
+            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .unwrap();
+        bytes
+    }
+
+    /// Send an image the way a paired device would: header frame, then body.
+    async fn send_image(to: SocketAddr, from: &str, key: &PeerKey, width: u32, height: u32, png: &[u8]) {
+        let details = crate::sync::image::ImageDetails {
+            width,
+            height,
+            is_screenshot: false,
+        };
+        let (frame, body) = crate::sync::image::seal_image(from, key, details, png).unwrap();
+        let mut stream = transport::connect(&to.to_string()).await.unwrap();
+        transport::write_frame(&mut stream, &frame).await.unwrap();
+        crate::sync::body::write_body(&mut stream, &body, IMAGE_BODY_LIMITS)
+            .await
+            .unwrap();
+    }
+
+    async fn next_image(device: &mut Device) -> Option<ReceivedImage> {
+        tokio::time::timeout(Duration::from_millis(500), device.images.recv())
+            .await
+            .ok()
+            .flatten()
+    }
+
+    #[tokio::test]
+    async fn image_from_a_paired_device_is_applied() {
+        let (_a, mut b) = paired_devices().await;
+        send_image(b.addr, "a", &KEY, 4, 3, &png_of(4, 3)).await;
+
+        assert_eq!(next_image(&mut b).await.map(|image| image.png), Some(png_of(4, 3)));
+    }
+
+    #[tokio::test]
+    async fn applied_image_names_its_sender() {
+        let (_a, mut b) = paired_devices().await;
+        send_image(b.addr, "a", &KEY, 4, 3, &png_of(4, 3)).await;
+
+        assert_eq!(next_image(&mut b).await.unwrap().from_name, "a");
+    }
+
+    #[tokio::test]
+    async fn applied_image_carries_its_pixel_hash() {
+        let (_a, mut b) = paired_devices().await;
+        send_image(b.addr, "a", &KEY, 4, 3, &png_of(4, 3)).await;
+        let pixels = image::RgbaImage::from_pixel(4, 3, image::Rgba([10, 200, 60, 255]));
+
+        assert_eq!(
+            next_image(&mut b).await.unwrap().pixel_hash,
+            crate::sync::image::pixel_hash(4, 3, pixels.as_raw())
+        );
+    }
+
+    #[tokio::test]
+    async fn image_from_an_unpaired_device_is_dropped() {
+        let (_a, mut b) = paired_devices().await;
+        send_image(b.addr, "stranger", &KEY, 4, 3, &png_of(4, 3)).await;
+
+        assert_eq!(next_image(&mut b).await, None);
+    }
+
+    #[tokio::test]
+    async fn image_that_is_not_a_png_is_dropped() {
+        let (_a, mut b) = paired_devices().await;
+        send_image(b.addr, "a", &KEY, 4, 3, b"not a png at all").await;
+
+        assert_eq!(next_image(&mut b).await, None);
+    }
+
+    #[tokio::test]
+    async fn image_whose_size_differs_from_its_header_is_dropped() {
+        let (_a, mut b) = paired_devices().await;
+        send_image(b.addr, "a", &KEY, 40, 30, &png_of(4, 3)).await;
+
+        assert_eq!(next_image(&mut b).await, None);
+    }
+
+    #[tokio::test]
+    async fn received_image_teaches_the_senders_new_ip() {
+        let listener_a = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener_b = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr_a = listener_a.local_addr().unwrap();
+        let old_a = SocketAddr::new("10.9.9.9".parse().unwrap(), addr_a.port());
+        let _a = device("a", listener_a, vec![]).await;
+        let mut b = device("b", listener_b, vec![peer("a", old_a)]).await;
+        send_image(b.addr, "a", &KEY, 4, 3, &png_of(4, 3)).await;
+        next_image(&mut b).await;
+
+        assert_eq!(
+            lock(&b.service.store).peer("a").unwrap().last_addr,
+            Some(addr_a.to_string())
+        );
+    }
+
     #[tokio::test]
     async fn newly_paired_devices_can_sync() {
         let a = unpaired_device(A_ID).await;
@@ -724,6 +902,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let hooks = SyncHooks {
             apply_clip: Arc::new(|_| {}),
+            apply_image: Arc::new(|_| {}),
             on_pairing: Arc::new(|_| {}),
             resolve_addr: Arc::new(|_| None),
         };

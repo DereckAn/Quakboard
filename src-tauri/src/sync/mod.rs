@@ -16,6 +16,7 @@ pub mod body;
 pub mod discovery;
 pub mod image;
 pub mod pairing;
+pub mod received;
 pub mod runtime;
 pub mod service;
 pub mod store;
