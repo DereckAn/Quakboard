@@ -47,7 +47,7 @@ fn read_clipboard_content_wayland() -> Result<ClipboardContent, String> {
     // 2. Raw image data (e.g. a screenshot) — there's no file to point to, so save bytes.
     if types.iter().any(|t| t == "image/png") {
         if let Some(image) = read_image_wayland() {
-            return Ok(ClipboardContent::Image(image, false));
+            return Ok(ClipboardContent::Image(image, looks_like_screenshot_types(&types)));
         }
     }
 
@@ -267,7 +267,15 @@ pub fn write_clipboard_image(image_path: &str) -> Result<(), String> {
     clipboard
         .set_image(image_data)
         .map_err(|e| e.to_string())
-        .map(|_| state::request_skip_events(2))
+        // Wayland reports one write as two clipboard events; elsewhere it's one.
+        .map(|_| state::request_skip_events(image_write_events()))
+}
+
+fn image_write_events() -> usize {
+    match detect_backend() {
+        ClipboardBackend::Wayland => 2,
+        ClipboardBackend::Native => 1,
+    }
 }
 
 fn is_image_file_url(text: &str) -> bool {
@@ -279,6 +287,15 @@ fn path_from_file_url(url: &str) -> Option<PathBuf> {
         .decode_utf8()
         .ok()?;
     Some(PathBuf::from(decoded.as_ref()))
+}
+
+/// Screenshot tools (hyprshot, grim | wl-copy) offer only image data. An app
+/// copying an image (a browser's "Copy image") also offers its HTML or source
+/// URL, so any of those means "not a screenshot".
+fn looks_like_screenshot_types(types: &[String]) -> bool {
+    !types.iter().any(|t| {
+        t == "text/html" || t == "text/x-moz-url" || t == "chromium/x-source-url"
+    })
 }
 
 fn looks_like_screenshot_text(text: &str) -> bool {
@@ -405,4 +422,36 @@ fn read_files_wayland() -> Option<ClipboardContent> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn types(list: &[&str]) -> Vec<String> {
+        list.iter().map(|t| t.to_string()).collect()
+    }
+
+    #[test]
+    fn image_only_copy_looks_like_a_screenshot() {
+        // What hyprshot's `wl-copy --type image/png` offers.
+        assert!(looks_like_screenshot_types(&types(&["image/png"])));
+    }
+
+    #[test]
+    fn browser_image_copy_is_not_a_screenshot() {
+        // What Brave's "Copy image" offers.
+        assert!(!looks_like_screenshot_types(&types(&[
+            "text/x-moz-url",
+            "text/html",
+            "image/png",
+            "chromium/x-internal-source-rfh-token",
+            "chromium/x-source-url",
+        ])));
+    }
+
+    #[test]
+    fn image_with_html_is_not_a_screenshot() {
+        assert!(!looks_like_screenshot_types(&types(&["image/png", "text/html"])));
+    }
 }

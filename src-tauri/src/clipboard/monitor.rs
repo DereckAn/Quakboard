@@ -5,6 +5,7 @@ use crate::clipboard::image_handler::{
 };
 use crate::clipboard::listener::ClipboardEvent;
 use crate::clipboard::operations::{read_clipboard_content, ClipboardContent};
+use crate::clipboard::backend::{detect_backend, ClipboardBackend};
 use crate::clipboard::state;
 use crate::clipboard::types::{detect_code_language, detect_content_type, get_source_app};
 use crate::db::models::CreateClipboardItemDto;
@@ -361,7 +362,12 @@ impl ClipboardMonitor {
                 // When the capture-folder watcher is active it stores screenshots
                 // as pointers, so skip saving the raw bytes to avoid a duplicate.
                 // Paired devices have no such file, so still send them the image.
-                if state::should_suppress_screenshot_bytes() {
+                // Only Wayland can tell a screenshot from an app's image copy (see
+                // `looks_like_screenshot_types`); elsewhere keep skipping them all.
+                let is_wayland = detect_backend() == ClipboardBackend::Wayland;
+                let is_watcher_screenshot = state::should_suppress_screenshot_bytes()
+                    && (screenshot_hint || !is_wayland);
+                if is_watcher_screenshot {
                     if let Some(sync) = sync {
                         sync_pixels(sync, image_data, screenshot_hint);
                     }
