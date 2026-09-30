@@ -12,7 +12,9 @@ use chacha20poly1305::{
 };
 use serde::{Deserialize, Serialize};
 
+pub mod service;
 pub mod store;
+pub mod transport;
 
 /// Symmetric key shared by two paired devices.
 pub type PeerKey = [u8; 32];

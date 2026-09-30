@@ -6,8 +6,9 @@ mod colors;
 mod commands;
 mod db;
 mod shortcuts;
-// NOTE: LAN sync is built in steps (docs/LAN_SYNC_PLAN.md); nothing calls it
-// until the transport lands in step 3. Drop this allow then.
+// NOTE: LAN sync is built in steps (docs/LAN_SYNC_PLAN.md). Pairing, unpairing
+// and address updates (steps 4, 6, 7) aren't called yet; drop this allow once
+// they are.
 #[allow(dead_code)]
 mod sync;
 
@@ -206,6 +207,13 @@ pub fn run() {
                 images_dir: images_dir_str,
                 app_data_dir: app_data_dir_str,
             }));
+
+            // Before the monitor starts, so its first copy can already sync.
+            if sync::service::is_enabled(&app_data_dir) {
+                if let Err(e) = sync::service::start(app.handle(), &app_data_dir) {
+                    eprintln!("Failed to start LAN sync: {e}");
+                }
+            }
 
             let app_handle = app.handle().clone();
             let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
