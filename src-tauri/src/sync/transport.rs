@@ -4,7 +4,7 @@
 //! The listener faces the LAN, so everything it reads is untrusted: frames are
 //! size-capped, reads time out, and concurrent connections are bounded.
 
-use std::{io, net::SocketAddr, sync::Arc, time::Duration};
+use std::{future::Future, io, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -52,19 +52,30 @@ pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Fram
     serde_json::from_slice(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-pub async fn send_frame(addr: &str, frame: &Frame) -> io::Result<()> {
-    let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
+pub async fn connect(addr: &str) -> io::Result<TcpStream> {
+    timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
         .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "connect timed out"))??;
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "connect timed out"))?
+}
+
+pub async fn send_frame(addr: &str, frame: &Frame) -> io::Result<()> {
+    let mut stream = connect(addr).await?;
     timeout(IO_TIMEOUT, write_frame(&mut stream, frame))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "send timed out"))?
 }
 
-pub type FrameHandler = Arc<dyn Fn(Frame, SocketAddr) + Send + Sync>;
+/// Handles a connection after its first frame. Gets the stream too, because
+/// pairing continues the conversation on the same connection.
+pub type ConnectionHandler = Arc<
+    dyn Fn(Frame, TcpStream, SocketAddr) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
 
-/// Accept connections until the task is dropped, reading one frame from each.
-pub async fn serve(listener: TcpListener, on_frame: FrameHandler) {
+/// Accept connections until the task is dropped, reading the first frame
+/// from each and handing the connection on.
+pub async fn serve(listener: TcpListener, on_connection: ConnectionHandler) {
     let slots = Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
 
     loop {
@@ -80,12 +91,12 @@ pub async fn serve(listener: TcpListener, on_frame: FrameHandler) {
         let Ok(slot) = slots.clone().acquire_owned().await else {
             return;
         };
-        let on_frame = on_frame.clone();
+        let on_connection = on_connection.clone();
 
         tokio::spawn(async move {
             let _slot = slot;
             match timeout(IO_TIMEOUT, read_frame(&mut stream)).await {
-                Ok(Ok(frame)) => on_frame(frame, peer_addr),
+                Ok(Ok(frame)) => on_connection(frame, stream, peer_addr).await,
                 Ok(Err(e)) => eprintln!("Dropped sync frame from {peer_addr}: {e}"),
                 Err(_) => eprintln!("Sync connection from {peer_addr} timed out"),
             }
