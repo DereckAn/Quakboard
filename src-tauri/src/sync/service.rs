@@ -3,7 +3,7 @@
 
 use std::{
     net::SocketAddr,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -11,7 +11,6 @@ use std::{
 };
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::oneshot,
@@ -19,11 +18,9 @@ use tokio::{
 };
 
 use super::{
-    discovery::Discovery,
     pairing::{self, LocalDevice, PairError},
-    store::{Peer, SyncStore, STORE_FILE_NAME},
-    transport::{self, SYNC_PORT},
-    ClipPayload, Frame,
+    store::{Peer, StoreError, SyncStore},
+    transport, ClipPayload, Frame,
 };
 
 /// Puts a received clip on the system clipboard.
@@ -57,6 +54,7 @@ pub struct SyncService {
     listen_port: u16,
     /// One pairing at a time, so a device on the LAN can't stack up prompts.
     is_pairing: AtomicBool,
+    accepts_pairing: AtomicBool,
     /// Text of the last received clip. Writing it to the clipboard makes the
     /// monitor see it as a new copy; this stops that one copy being sent back.
     last_received: Mutex<Option<String>>,
@@ -75,6 +73,7 @@ impl SyncService {
             store_path,
             listen_port,
             is_pairing: AtomicBool::new(false),
+            accepts_pairing: AtomicBool::new(false),
             last_received: Mutex::new(None),
             hooks,
         })
@@ -141,20 +140,57 @@ impl SyncService {
         addr: &str,
         code: oneshot::Receiver<String>,
     ) -> Result<Peer, PairError> {
-        let _pairing = self.begin_pairing().ok_or(PairError::Busy)?;
-        let mut stream = transport::connect(addr).await?;
-        let peer_ip = stream.peer_addr()?.ip();
-
-        let (id, name) = self.identity();
-        let me = self.local_device(&id, &name);
-        let result = pairing::initiate(&mut stream, &me, peer_ip, code).await;
+        let Some(_pairing) = self.begin_pairing() else {
+            return self.finish_pairing(Err(PairError::Busy));
+        };
+        let result = async {
+            let mut stream = transport::connect(addr).await?;
+            let peer_ip = stream.peer_addr()?.ip();
+            let (id, name) = self.identity();
+            let me = self.local_device(&id, &name);
+            pairing::initiate(&mut stream, &me, peer_ip, code).await
+        }
+        .await;
         self.finish_pairing(result)
+    }
+
+    /// Only answer pairing requests while the user has the Devices screen
+    /// open, so nobody on the LAN can pop up a code prompt at other times.
+    pub fn set_accepting_pairing(&self, accepting: bool) {
+        self.accepts_pairing.store(accepting, Ordering::SeqCst);
+    }
+
+    pub fn peers(&self) -> Vec<Peer> {
+        lock(&self.store).peers.clone()
+    }
+
+    /// Forget a paired device. Returns whether it was paired.
+    pub fn unpair(&self, peer_id: &str) -> Result<bool, StoreError> {
+        let mut store = lock(&self.store);
+        let mut updated = store.clone();
+        if !updated.remove_peer(peer_id) {
+            return Ok(false);
+        }
+        // Save before going live, like pairing, so disk and memory agree.
+        updated.save(&self.store_path)?;
+        *store = updated;
+        Ok(true)
+    }
+
+    /// This device's (id, name).
+    pub fn identity(&self) -> (String, String) {
+        let store = lock(&self.store);
+        (store.device_id.clone(), store.device_name.clone())
     }
 
     async fn handle_connection(&self, frame: Frame, mut stream: TcpStream, addr: SocketAddr) {
         match frame {
             Frame::Clip { .. } => self.handle_clip(frame, addr),
             Frame::PairRequest { from } => {
+                if !self.accepts_pairing.load(Ordering::SeqCst) {
+                    eprintln!("Ignored pairing request from {addr}: Devices screen not open");
+                    return;
+                }
                 let Some(_pairing) = self.begin_pairing() else {
                     eprintln!("Ignored pairing request from {addr}: already pairing");
                     return;
@@ -228,11 +264,6 @@ impl SyncService {
         }
     }
 
-    fn identity(&self) -> (String, String) {
-        let store = lock(&self.store);
-        (store.device_id.clone(), store.device_name.clone())
-    }
-
     fn local_device<'a>(&self, id: &'a str, name: &'a str) -> LocalDevice<'a> {
         LocalDevice {
             id,
@@ -257,67 +288,6 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Whether the user turned sync on. `save_setting` stores values as strings.
-pub fn is_enabled(app_data_dir: &Path) -> bool {
-    std::fs::read_to_string(app_data_dir.join("settings.json"))
-        .ok()
-        .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
-        .and_then(|settings| settings.get("syncEnabled").cloned())
-        .is_some_and(|value| value == "true" || value == true)
-}
-
-/// Load this device's identity, start listening, and register the service so
-/// the clipboard monitor and commands can use it.
-pub fn start(app: &AppHandle, app_data_dir: &Path) -> Result<(), String> {
-    let store_path = app_data_dir.join(STORE_FILE_NAME);
-    let store = SyncStore::load_or_create(&store_path).map_err(|e| e.to_string())?;
-
-    let event_app = app.clone();
-    let hooks = SyncHooks {
-        apply_clip: Arc::new(|clip: ClipPayload| {
-            // Writing spawns wl-copy / talks to the OS clipboard; keep it off
-            // the async workers.
-            tauri::async_runtime::spawn_blocking(move || {
-                if let Err(e) = crate::clipboard::operations::write_clipboard(&clip.text) {
-                    eprintln!("Failed to apply synced clip: {e}");
-                }
-            });
-        }),
-        on_pairing: Arc::new(move |event| {
-            if let Err(e) = event_app.emit("sync-pairing", event) {
-                eprintln!("Failed to emit sync-pairing event: {e}");
-            }
-        }),
-    };
-    let device_id = store.device_id.clone();
-    let service = SyncService::new(store, store_path, SYNC_PORT, hooks);
-    app.manage(service.clone());
-
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let listener = match TcpListener::bind(("0.0.0.0", SYNC_PORT)).await {
-            Ok(listener) => listener,
-            Err(e) => {
-                eprintln!("Sync could not listen on port {SYNC_PORT}: {e}");
-                return;
-            }
-        };
-        println!("Sync listening on port {SYNC_PORT}");
-
-        // Only advertise once there is a listener to reach.
-        match Discovery::start(&device_id, SYNC_PORT) {
-            Ok(discovery) => {
-                app.manage(discovery);
-            }
-            Err(e) => eprintln!("Sync discovery unavailable, connect by IP instead: {e}"),
-        }
-
-        service.listen(listener).await;
-    });
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -325,7 +295,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::sync::PeerKey;
+    use crate::sync::{store::STORE_FILE_NAME, PeerKey};
 
     const KEY: PeerKey = [1; 32];
     const A_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -377,6 +347,8 @@ mod tests {
             }),
         };
         let service = SyncService::new(store, store_path.clone(), addr.port(), hooks);
+        // As if the Devices screen were open; tests for the closed case turn it off.
+        service.set_accepting_pairing(true);
         tokio::spawn(service.clone().listen(listener));
         Device {
             service,
@@ -563,6 +535,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pairing_request_is_ignored_while_devices_screen_is_closed() {
+        let a = unpaired_device(A_ID).await;
+        let b = unpaired_device(B_ID).await;
+        b.service.set_accepting_pairing(false);
+        let (_code_tx, code_rx) = oneshot::channel();
+        let result = a.service.pair_with(&b.addr.to_string(), code_rx).await;
+
+        assert!(matches!(result, Err(PairError::Io(_))));
+    }
+
+    #[tokio::test]
+    async fn unpairing_forgets_the_device_on_disk() {
+        let a = unpaired_device(A_ID).await;
+        let mut b = unpaired_device(B_ID).await;
+        pair(&a, &mut b, str::to_string).await.unwrap();
+        b.service.unpair(A_ID).unwrap();
+
+        assert!(SyncStore::load_or_create(&b.store_path).unwrap().peers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unpaired_device_can_no_longer_send_clips() {
+        let a = unpaired_device(A_ID).await;
+        let mut b = unpaired_device(B_ID).await;
+        pair(&a, &mut b, str::to_string).await.unwrap();
+        b.service.unpair(A_ID).unwrap();
+        a.service.broadcast(clip("still there?")).await;
+
+        assert_eq!(next_clip(&mut b).await, None);
+    }
+
+    #[test]
+    fn unpairing_an_unknown_device_reports_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = SyncHooks {
+            apply_clip: Arc::new(|_| {}),
+            on_pairing: Arc::new(|_| {}),
+        };
+        let service = SyncService::new(
+            SyncStore::new("desk".into()),
+            dir.path().join(STORE_FILE_NAME),
+            0,
+            hooks,
+        );
+
+        assert!(!service.unpair(A_ID).unwrap());
+    }
+
+    #[tokio::test]
     async fn second_pairing_at_once_is_refused() {
         let a = unpaired_device(A_ID).await;
         let mut b = unpaired_device(B_ID).await;
@@ -574,18 +595,5 @@ mod tests {
         let (_tx, rx) = oneshot::channel();
         let second = a.service.pair_with(&b.addr.to_string(), rx).await;
         assert!(matches!(second, Err(PairError::Busy)));
-    }
-
-    #[test]
-    fn sync_is_off_without_a_setting() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(!is_enabled(dir.path()));
-    }
-
-    #[test]
-    fn sync_is_on_when_the_setting_is_the_string_true() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("settings.json"), r#"{"syncEnabled":"true"}"#).unwrap();
-        assert!(is_enabled(dir.path()));
     }
 }

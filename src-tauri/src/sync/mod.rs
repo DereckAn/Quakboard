@@ -14,6 +14,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub mod discovery;
 pub mod pairing;
+pub mod runtime;
 pub mod service;
 pub mod store;
 pub mod transport;

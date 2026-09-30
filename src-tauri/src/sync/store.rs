@@ -117,6 +117,8 @@ impl SyncStore {
     }
 
     /// Returns whether the peer exists.
+    // NOTE: used by the last-address fallback (docs/LAN_SYNC_PLAN.md step 7).
+    #[allow(dead_code)]
     pub fn set_last_addr(&mut self, id: &str, addr: &str) -> bool {
         match self.peers.iter_mut().find(|p| p.id == id) {
             Some(peer) => {

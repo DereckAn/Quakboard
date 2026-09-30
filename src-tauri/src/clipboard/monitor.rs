@@ -9,7 +9,7 @@ use crate::clipboard::state;
 use crate::clipboard::types::{detect_code_language, detect_content_type, get_source_app};
 use crate::db::models::CreateClipboardItemDto;
 use crate::db::repository::ClipboardRepository;
-use crate::sync::{service::SyncService, ClipPayload};
+use crate::sync::{runtime::SyncRuntime, ClipPayload};
 use std::{
     fs,
     sync::Arc,
@@ -290,9 +290,12 @@ impl ClipboardMonitor {
                                     eprintln!("Failed to emit clipboard-item-added event: {e}");
                                 }
 
-                                // Only registered when the user turned sync on.
-                                if let Some(sync) = self.app_handle.try_state::<Arc<SyncService>>() {
-                                    let sync = sync.inner().clone();
+                                // Only running while the user has sync turned on.
+                                let sync = self
+                                    .app_handle
+                                    .try_state::<SyncRuntime>()
+                                    .and_then(|runtime| runtime.service());
+                                if let Some(sync) = sync {
                                     let clip = ClipPayload {
                                         text: current_text.clone(),
                                         content_type: item.content_type.clone(),

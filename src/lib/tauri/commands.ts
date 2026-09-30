@@ -3,6 +3,9 @@ import type {
   CreateClipboardItemDto,
   LabFeatureId,
   LabFeatureWithMeta,
+  NearbyDevice,
+  SyncPeer,
+  SyncStatus,
   UpdateClipboardItemDto,
 } from "$lib/types";
 import { invoke } from "@tauri-apps/api/core";
@@ -440,4 +443,40 @@ export async function tauriUpdateScreenshotHotkeys(
 
 export async function tauriUnregisterScreenshotHotkeys(): Promise<void> {
   await invoke("unregister_screenshot_hotkeys");
+}
+// LAN sync
+export async function tauriSyncGetStatus(): Promise<SyncStatus> {
+  return await invoke<SyncStatus>("sync_get_status");
+}
+
+export async function tauriSyncSetEnabled(enabled: boolean): Promise<SyncStatus> {
+  return await invoke<SyncStatus>("sync_set_enabled", { enabled });
+}
+
+export async function tauriSyncListPeers(): Promise<SyncPeer[]> {
+  return await invoke<SyncPeer[]>("sync_list_peers");
+}
+
+export async function tauriSyncListNearby(): Promise<NearbyDevice[]> {
+  return await invoke<NearbyDevice[]>("sync_list_nearby");
+}
+
+export async function tauriSyncSetAcceptingPairing(accepting: boolean): Promise<void> {
+  await invoke("sync_set_accepting_pairing", { accepting });
+}
+
+export async function tauriSyncPairStart(deviceId: string): Promise<void> {
+  await invoke("sync_pair_start", { deviceId });
+}
+
+export async function tauriSyncPairSubmitCode(code: string): Promise<void> {
+  await invoke("sync_pair_submit_code", { code });
+}
+
+export async function tauriSyncPairCancel(): Promise<void> {
+  await invoke("sync_pair_cancel");
+}
+
+export async function tauriSyncUnpair(peerId: string): Promise<void> {
+  await invoke("sync_unpair", { peerId });
 }
