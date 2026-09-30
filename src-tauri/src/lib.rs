@@ -474,6 +474,7 @@ pub fn run() {
             commands::sync_list_nearby,
             commands::sync_set_accepting_pairing,
             commands::sync_pair_start,
+            commands::sync_pair_by_address,
             commands::sync_pair_submit_code,
             commands::sync_pair_cancel,
             commands::sync_unpair,

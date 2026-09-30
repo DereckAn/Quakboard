@@ -2,6 +2,7 @@
 //! at startup; the service inside exists only while sync is enabled.
 
 use std::{
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -29,7 +30,8 @@ pub struct SyncRuntime {
 struct Running {
     service: Arc<SyncService>,
     /// None when mDNS couldn't start; connecting by IP still works then.
-    discovery: Option<Discovery>,
+    /// Shared with the service, which looks up devices whose address changed.
+    discovery: Option<Arc<Discovery>>,
     listener: JoinHandle<()>,
 }
 
@@ -68,7 +70,7 @@ impl SyncRuntime {
         lock(&self.running)
             .as_ref()
             .and_then(|running| running.discovery.as_ref())
-            .map(Discovery::devices)
+            .map(|discovery| discovery.devices())
             .unwrap_or_default()
     }
 
@@ -93,12 +95,11 @@ impl SyncRuntime {
 
         let store_path = self.app_data_dir.join(STORE_FILE_NAME);
         let store = SyncStore::load_or_create(&store_path).map_err(|e| e.to_string())?;
-        let device_id = store.device_id.clone();
-        let service = SyncService::new(store, store_path, SYNC_PORT, hooks(app));
-
-        let discovery = Discovery::start(&device_id, SYNC_PORT)
+        let discovery = Discovery::start(&store.device_id, SYNC_PORT)
+            .map(Arc::new)
             .map_err(|e| eprintln!("Sync discovery unavailable, connect by IP instead: {e}"))
             .ok();
+        let service = SyncService::new(store, store_path, SYNC_PORT, hooks(app, discovery.clone()));
         let listener = tauri::async_runtime::spawn(service.clone().listen(listener));
         println!("Sync listening on port {SYNC_PORT}");
 
@@ -121,11 +122,21 @@ impl SyncRuntime {
     /// which the user submits with `submit_code`; the outcome arrives as a
     /// `sync-pairing` event.
     pub fn start_pairing(&self, device_id: &str) -> Result<(), String> {
-        let service = self.service().ok_or("Sync is off")?;
         let addr = self
             .address_of(device_id)
             .ok_or("That device is no longer on the network")?;
+        self.start_pairing_at(addr)
+    }
 
+    /// Pair with a device by the IP the user typed, for networks that block
+    /// mDNS. Same flow as `start_pairing` from there.
+    pub fn start_pairing_by_address(&self, input: &str) -> Result<(), String> {
+        let addr = parse_peer_address(input)?;
+        self.start_pairing_at(addr.to_string())
+    }
+
+    fn start_pairing_at(&self, addr: String) -> Result<(), String> {
+        let service = self.service().ok_or("Sync is off")?;
         let (code_tx, code_rx) = oneshot::channel();
         // Replacing an older sender cancels that attempt's code entry.
         *lock(&self.pending_code) = Some(code_tx);
@@ -151,7 +162,35 @@ impl SyncRuntime {
     }
 }
 
-fn hooks(app: &AppHandle) -> SyncHooks {
+/// Accept `192.168.1.20` or `192.168.1.20:47823`. IPs only, no hostnames:
+/// looking a name up would leak it to DNS and isn't needed on a LAN.
+pub fn parse_peer_address(input: &str) -> Result<SocketAddr, String> {
+    let input = input.trim();
+    if let Ok(addr) = input.parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+    input
+        .parse::<IpAddr>()
+        .map(|ip| SocketAddr::new(ip, SYNC_PORT))
+        .map_err(|_| format!("\"{input}\" isn't an IP address, like 192.168.1.20"))
+}
+
+/// This device's LAN addresses, to read off and type on the other device.
+pub fn local_addresses() -> Vec<String> {
+    let mut addresses: Vec<String> = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|iface| !iface.is_loopback() && !iface.is_link_local())
+        // ponytail: IPv4 only, matching discovery.
+        .filter(|iface| iface.ip().is_ipv4())
+        .map(|iface| iface.ip().to_string())
+        .collect();
+    addresses.sort();
+    addresses.dedup();
+    addresses
+}
+
+fn hooks(app: &AppHandle, discovery: Option<Arc<Discovery>>) -> SyncHooks {
     let event_app = app.clone();
     SyncHooks {
         apply_clip: Arc::new(|clip: ClipPayload| {
@@ -167,6 +206,9 @@ fn hooks(app: &AppHandle) -> SyncHooks {
             if let Err(e) = event_app.emit("sync-pairing", event) {
                 eprintln!("Failed to emit sync-pairing event: {e}");
             }
+        }),
+        resolve_addr: Arc::new(move |device_id| {
+            discovery.as_ref().and_then(|d| d.address_of(device_id))
         }),
     }
 }
@@ -208,6 +250,32 @@ mod tests {
     fn submitting_a_code_without_a_pairing_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         assert!(SyncRuntime::new(dir.path()).submit_code("123456".into()).is_err());
+    }
+
+    #[test]
+    fn bare_ip_gets_the_sync_port() {
+        assert_eq!(
+            parse_peer_address(" 192.168.1.20 "),
+            Ok("192.168.1.20:47823".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn ip_with_port_is_kept_as_is() {
+        assert_eq!(
+            parse_peer_address("192.168.1.20:5000"),
+            Ok("192.168.1.20:5000".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn hostnames_are_rejected() {
+        assert!(parse_peer_address("my-laptop.local").is_err());
+    }
+
+    #[test]
+    fn local_addresses_exclude_loopback() {
+        assert!(!local_addresses().contains(&"127.0.0.1".to_string()));
     }
 
     #[test]

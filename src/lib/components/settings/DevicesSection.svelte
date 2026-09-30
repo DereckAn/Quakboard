@@ -6,6 +6,7 @@
     tauriSyncGetStatus,
     tauriSyncListNearby,
     tauriSyncListPeers,
+    tauriSyncPairByAddress,
     tauriSyncPairCancel,
     tauriSyncPairStart,
     tauriSyncPairSubmitCode,
@@ -33,7 +34,9 @@
   let confirmingUnpairId = $state<string | null>(null);
 
   // This device started pairing and waits for the code the other one shows.
-  let pairingWith = $state<NearbyDevice | null>(null);
+  // Holds how to name that device in the dialog.
+  let pairingWith = $state<string | null>(null);
+  let manualAddress = $state("");
   let typedCode = $state("");
   let isSubmittingCode = $state(false);
   let codeInput = $state<HTMLInputElement>();
@@ -101,7 +104,23 @@
     typedCode = "";
     try {
       await tauriSyncPairStart(device.id);
-      pairingWith = device;
+      pairingWith = `Quakboard device #${device.shortId}`;
+    } catch (err) {
+      errorMessage = describe(err);
+    }
+  }
+
+  // For networks that block mDNS, so the device never shows up as nearby.
+  async function handlePairByAddress(e: SubmitEvent) {
+    e.preventDefault();
+    const address = manualAddress.trim();
+    if (!address || pairingWith) return;
+    errorMessage = null;
+    notice = null;
+    typedCode = "";
+    try {
+      await tauriSyncPairByAddress(address);
+      pairingWith = address;
     } catch (err) {
       errorMessage = describe(err);
     }
@@ -228,6 +247,9 @@
       This device:
       <span class="text-text">{status.deviceName}</span>
       · #{status.shortId}
+      {#if status.addresses.length > 0}
+        · IP <span class="text-text">{status.addresses.join(", ")}</span>
+      {/if}
     </p>
 
     <div class="space-y-2">
@@ -313,6 +335,33 @@
         </ul>
       {/if}
     </div>
+
+    <form class="space-y-2" onsubmit={handlePairByAddress}>
+      <label for="pair-address" class="block text-sm font-medium text-text">
+        Connect by IP
+      </label>
+      <p class="text-xs text-text-muted">
+        Other device not showing up? Type the IP it shows under "This device".
+      </p>
+      <div class="flex gap-2">
+        <input
+          id="pair-address"
+          bind:value={manualAddress}
+          placeholder="192.168.1.20"
+          inputmode="decimal"
+          autocomplete="off"
+          spellcheck="false"
+          class="flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text placeholder:text-text-muted"
+        />
+        <Button
+          type="submit"
+          size="sm"
+          disabled={!manualAddress.trim() || pairingWith !== null}
+        >
+          Pair
+        </Button>
+      </div>
+    </form>
   {/if}
 </section>
 
@@ -323,7 +372,7 @@
 >
   <form class="p-6 space-y-4" onsubmit={handleSubmitCode}>
     <label for="pairing-code" class="block text-sm text-text-muted">
-      Type the 6-digit code shown on Quakboard device #{pairingWith?.shortId}.
+      Type the 6-digit code shown on {pairingWith}.
     </label>
     <input
       id="pairing-code"

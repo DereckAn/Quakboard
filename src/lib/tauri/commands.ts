@@ -469,6 +469,10 @@ export async function tauriSyncPairStart(deviceId: string): Promise<void> {
   await invoke("sync_pair_start", { deviceId });
 }
 
+export async function tauriSyncPairByAddress(address: string): Promise<void> {
+  await invoke("sync_pair_by_address", { address });
+}
+
 export async function tauriSyncPairSubmitCode(code: string): Promise<void> {
   await invoke("sync_pair_submit_code", { code });
 }

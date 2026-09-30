@@ -2,7 +2,10 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::commands::settings::save_setting;
-use crate::sync::{discovery::short_id, runtime::SyncRuntime, runtime::SETTING_KEY};
+use crate::sync::{
+    discovery::short_id,
+    runtime::{local_addresses, SyncRuntime, SETTING_KEY},
+};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -11,6 +14,8 @@ pub struct SyncStatus {
     running: bool,
     device_name: Option<String>,
     short_id: Option<String>,
+    /// This device's LAN IPs, for connecting by IP from the other device.
+    addresses: Vec<String>,
 }
 
 /// A paired device as the UI sees it. Deliberately has no key.
@@ -35,6 +40,7 @@ fn status(runtime: &SyncRuntime) -> SyncStatus {
     SyncStatus {
         enabled: runtime.is_enabled(),
         running: identity.is_some(),
+        addresses: if identity.is_some() { local_addresses() } else { Vec::new() },
         short_id: identity.as_ref().map(|(id, _)| short_id(id).to_string()),
         device_name: identity.map(|(_, name)| name),
     }
@@ -106,6 +112,11 @@ pub fn sync_set_accepting_pairing(runtime: State<'_, SyncRuntime>, accepting: bo
 #[tauri::command]
 pub fn sync_pair_start(runtime: State<'_, SyncRuntime>, device_id: String) -> Result<(), String> {
     runtime.start_pairing(&device_id)
+}
+
+#[tauri::command]
+pub fn sync_pair_by_address(runtime: State<'_, SyncRuntime>, address: String) -> Result<(), String> {
+    runtime.start_pairing_by_address(&address)
 }
 
 #[tauri::command]

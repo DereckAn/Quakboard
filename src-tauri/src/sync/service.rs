@@ -2,7 +2,7 @@
 //! copies to them, and pairs new devices.
 
 use std::{
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -27,12 +27,15 @@ use super::{
 pub type ApplyClip = Arc<dyn Fn(ClipPayload) + Send + Sync>;
 /// Tells the UI what pairing is doing.
 pub type OnPairing = Arc<dyn Fn(PairingEvent) + Send + Sync>;
+/// Looks a device up on the network by id (mDNS), for when its last address fails.
+pub type ResolveAddr = Arc<dyn Fn(&str) -> Option<SocketAddr> + Send + Sync>;
 
 /// The service's effects on the outside world, injected so tests don't touch
-/// the real clipboard or UI.
+/// the real clipboard, UI or network discovery.
 pub struct SyncHooks {
     pub apply_clip: ApplyClip,
     pub on_pairing: OnPairing,
+    pub resolve_addr: ResolveAddr,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -90,8 +93,10 @@ impl SyncService {
         .await;
     }
 
-    /// Send a local copy to every paired device with a known address.
-    /// Returns how many devices it reached.
+    /// Send a local copy to every paired device. Tries each device's last
+    /// address first and falls back to looking it up on the network, so mDNS
+    /// only does real work when a device's IP changed. Returns how many
+    /// devices it reached.
     pub async fn broadcast(&self, clip: ClipPayload) -> usize {
         // take(): the guard suppresses only the echo itself, so copying the
         // same text again later still syncs.
@@ -104,9 +109,6 @@ impl SyncService {
         {
             let store = lock(&self.store);
             for peer in &store.peers {
-                let Some(addr) = peer.last_addr.clone() else {
-                    continue;
-                };
                 let frame = match Frame::seal_clip(&store.device_id, &peer.key, &clip) {
                     Ok(frame) => frame,
                     Err(e) => {
@@ -115,22 +117,57 @@ impl SyncService {
                     }
                 };
                 let peer_id = peer.id.clone();
+                let last_addr = peer.last_addr.clone();
+                let resolve_addr = self.hooks.resolve_addr.clone();
                 sends.spawn(async move {
-                    let result = transport::send_frame(&addr, &frame).await;
-                    if let Err(e) = &result {
-                        eprintln!("Could not reach {peer_id} at {addr}: {e}");
-                    }
-                    result.is_ok()
+                    let delivery = deliver(&peer_id, last_addr, &frame, &resolve_addr).await;
+                    (peer_id, delivery)
                 });
             }
         }
 
-        sends
-            .join_all()
-            .await
-            .into_iter()
-            .filter(|reached| *reached)
-            .count()
+        let mut reached = 0;
+        for (peer_id, delivery) in sends.join_all().await {
+            match delivery {
+                Delivery::Reached => reached += 1,
+                Delivery::ReachedAt(addr) => {
+                    reached += 1;
+                    self.remember_addr(&peer_id, &addr);
+                }
+                Delivery::Missed => {}
+            }
+        }
+        reached
+    }
+
+    /// A paired device reached us from `ip`. Keep its listening port from
+    /// pairing: the connection's source port is ephemeral.
+    fn learn_ip(&self, peer_id: &str, ip: IpAddr) {
+        let port = lock(&self.store)
+            .peer(peer_id)
+            .and_then(|peer| peer.last_addr.as_deref()?.parse::<SocketAddr>().ok())
+            .map(|addr| addr.port());
+        if let Some(port) = port {
+            self.remember_addr(peer_id, &SocketAddr::new(ip, port).to_string());
+        }
+    }
+
+    /// Record where a paired device can be reached now, and persist it.
+    fn remember_addr(&self, peer_id: &str, addr: &str) {
+        let mut store = lock(&self.store);
+        if store.peer(peer_id).and_then(|p| p.last_addr.as_deref()) == Some(addr) {
+            return;
+        }
+        let mut updated = store.clone();
+        updated.set_last_addr(peer_id, addr);
+        match updated.save(&self.store_path) {
+            Ok(()) => {
+                *store = updated;
+                println!("Sync now reaches {peer_id} at {addr}");
+            }
+            // Still usable this session via the lookup; retried next time.
+            Err(e) => eprintln!("Could not save new address for {peer_id}: {e}"),
+        }
     }
 
     /// Pair with the device listening at `addr`. That device shows a code;
@@ -223,6 +260,8 @@ impl SyncService {
         match frame.open_clip(&key) {
             Ok(clip) => {
                 *lock(&self.last_received) = Some(clip.text.clone());
+                // Decrypting proved the sender, so its current IP is trustworthy.
+                self.learn_ip(from, from_addr.ip());
                 (self.hooks.apply_clip)(clip);
             }
             Err(e) => eprintln!("Dropped clip from {from} at {from_addr}: {e}"),
@@ -273,6 +312,43 @@ impl SyncService {
     }
 }
 
+enum Delivery {
+    /// Reached at the address we already had.
+    Reached,
+    /// Reached at a newly looked-up address, which should be remembered.
+    ReachedAt(String),
+    Missed,
+}
+
+async fn deliver(
+    peer_id: &str,
+    last_addr: Option<String>,
+    frame: &Frame,
+    resolve_addr: &ResolveAddr,
+) -> Delivery {
+    if let Some(addr) = &last_addr {
+        match transport::send_frame(addr, frame).await {
+            Ok(()) => return Delivery::Reached,
+            Err(e) => eprintln!("Could not reach {peer_id} at {addr}: {e}"),
+        }
+    }
+
+    let Some(found) = resolve_addr(peer_id).map(|addr| addr.to_string()) else {
+        return Delivery::Missed;
+    };
+    if last_addr.as_deref() == Some(found.as_str()) {
+        // Discovery agrees with the address that just failed; it's offline.
+        return Delivery::Missed;
+    }
+    match transport::send_frame(&found, frame).await {
+        Ok(()) => Delivery::ReachedAt(found),
+        Err(e) => {
+            eprintln!("Could not reach {peer_id} at {found} either: {e}");
+            Delivery::Missed
+        }
+    }
+}
+
 /// Clears the in-progress flag however pairing ends, including early returns.
 struct PairingGuard<'a>(&'a AtomicBool);
 
@@ -290,7 +366,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{collections::HashMap, time::Duration};
 
     use tokio::sync::mpsc;
 
@@ -307,6 +383,8 @@ mod tests {
         events: mpsc::UnboundedReceiver<PairingEvent>,
         addr: SocketAddr,
         store_path: PathBuf,
+        /// Stands in for mDNS: what this device's lookup finds, by device id.
+        network: Arc<Mutex<HashMap<String, SocketAddr>>>,
         _dir: tempfile::TempDir,
     }
 
@@ -338,6 +416,8 @@ mod tests {
             device_name: format!("{id} name"),
             peers,
         };
+        let network = Arc::new(Mutex::new(HashMap::new()));
+        let lookup = Arc::clone(&network);
         let hooks = SyncHooks {
             apply_clip: Arc::new(move |clip| {
                 let _ = clip_tx.send(clip);
@@ -345,6 +425,7 @@ mod tests {
             on_pairing: Arc::new(move |event| {
                 let _ = event_tx.send(event);
             }),
+            resolve_addr: Arc::new(move |id| lock(&lookup).get(id).copied()),
         };
         let service = SyncService::new(store, store_path.clone(), addr.port(), hooks);
         // As if the Devices screen were open; tests for the closed case turn it off.
@@ -356,6 +437,7 @@ mod tests {
             events,
             addr,
             store_path,
+            network,
             _dir: dir,
         }
     }
@@ -465,6 +547,77 @@ mod tests {
         assert_eq!(lonely.service.broadcast(clip("anyone?")).await, 0);
     }
 
+    /// An address nothing listens on, like a device that moved away.
+    async fn dead_addr() -> SocketAddr {
+        TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap()
+    }
+
+    /// "a" knows "b" only at `b_last_addr`; "b" knows "a" correctly.
+    async fn a_with_stale_address_for_b(b_last_addr: Option<SocketAddr>) -> (Device, Device) {
+        let listener_a = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener_b = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr_a = listener_a.local_addr().unwrap();
+        let stale_b = Peer {
+            last_addr: b_last_addr.map(|addr| addr.to_string()),
+            ..peer("b", addr_a)
+        };
+        let a = device("a", listener_a, vec![stale_b]).await;
+        let b = device("b", listener_b, vec![peer("a", addr_a)]).await;
+        (a, b)
+    }
+
+    #[tokio::test]
+    async fn device_that_moved_is_reached_through_lookup() {
+        let (a, mut b) = a_with_stale_address_for_b(Some(dead_addr().await)).await;
+        lock(&a.network).insert("b".into(), b.addr);
+        a.service.broadcast(clip("found you")).await;
+
+        assert_eq!(next_clip(&mut b).await, Some(clip("found you")));
+    }
+
+    #[tokio::test]
+    async fn device_without_an_address_is_reached_through_lookup() {
+        let (a, mut b) = a_with_stale_address_for_b(None).await;
+        lock(&a.network).insert("b".into(), b.addr);
+        a.service.broadcast(clip("hello")).await;
+
+        assert_eq!(next_clip(&mut b).await, Some(clip("hello")));
+    }
+
+    #[tokio::test]
+    async fn looked_up_address_is_saved_for_next_time() {
+        let (a, b) = a_with_stale_address_for_b(Some(dead_addr().await)).await;
+        lock(&a.network).insert("b".into(), b.addr);
+        a.service.broadcast(clip("found you")).await;
+        let saved = SyncStore::load_or_create(&a.store_path).unwrap();
+
+        assert_eq!(saved.peer("b").unwrap().last_addr, Some(b.addr.to_string()));
+    }
+
+    #[tokio::test]
+    async fn device_missing_from_lookup_counts_as_unreached() {
+        let (a, _b) = a_with_stale_address_for_b(Some(dead_addr().await)).await;
+        assert_eq!(a.service.broadcast(clip("anyone?")).await, 0);
+    }
+
+    #[tokio::test]
+    async fn clip_from_a_new_ip_updates_the_senders_address() {
+        let listener_a = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener_b = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (addr_a, addr_b) = (listener_a.local_addr().unwrap(), listener_b.local_addr().unwrap());
+        // b remembers a at an old IP; a's port stays the same.
+        let old_a = SocketAddr::new("10.9.9.9".parse().unwrap(), addr_a.port());
+        let a = device("a", listener_a, vec![peer("b", addr_b)]).await;
+        let mut b = device("b", listener_b, vec![peer("a", old_a)]).await;
+        a.service.broadcast(clip("new place")).await;
+        next_clip(&mut b).await;
+
+        assert_eq!(
+            lock(&b.service.store).peer("a").unwrap().last_addr,
+            Some(addr_a.to_string())
+        );
+    }
+
     #[tokio::test]
     async fn newly_paired_devices_can_sync() {
         let a = unpaired_device(A_ID).await;
@@ -572,6 +725,7 @@ mod tests {
         let hooks = SyncHooks {
             apply_clip: Arc::new(|_| {}),
             on_pairing: Arc::new(|_| {}),
+            resolve_addr: Arc::new(|_| None),
         };
         let service = SyncService::new(
             SyncStore::new("desk".into()),

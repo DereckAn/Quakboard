@@ -3,6 +3,8 @@ export interface SyncStatus {
   running: boolean;
   deviceName: string | null;
   shortId: string | null;
+  /** This device's LAN IPs, to type on the other device. */
+  addresses: string[];
 }
 
 export interface SyncPeer {
