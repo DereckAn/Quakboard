@@ -453,6 +453,12 @@ export async function tauriSyncSetEnabled(enabled: boolean): Promise<SyncStatus>
   return await invoke<SyncStatus>("sync_set_enabled", { enabled });
 }
 
+export async function tauriSyncSetImagesEnabled(
+  enabled: boolean,
+): Promise<SyncStatus> {
+  return await invoke<SyncStatus>("sync_set_images_enabled", { enabled });
+}
+
 export async function tauriSyncListPeers(): Promise<SyncPeer[]> {
   return await invoke<SyncPeer[]>("sync_list_peers");
 }

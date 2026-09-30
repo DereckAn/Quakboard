@@ -346,10 +346,12 @@ impl ClipboardMonitor {
                 // receiver; our own clipboard write of it must not be stored or
                 // sent again. Checked after `last_image_hash` is updated, so a
                 // duplicate event for the same write is still filtered above.
+                // None unless sync is on *and* the user lets images sync.
                 let sync = self
                     .app_handle
                     .try_state::<SyncRuntime>()
-                    .and_then(|runtime| runtime.service());
+                    .and_then(|runtime| runtime.service())
+                    .filter(|service| service.is_syncing_images());
                 if let Some(sync) = &sync {
                     let hash = pixel_hash(
                         image_data.width as u32,

@@ -470,6 +470,7 @@ pub fn run() {
             commands::get_platform,
             commands::sync_get_status,
             commands::sync_set_enabled,
+            commands::sync_set_images_enabled,
             commands::sync_list_peers,
             commands::sync_list_nearby,
             commands::sync_set_accepting_pairing,

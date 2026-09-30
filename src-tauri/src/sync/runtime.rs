@@ -24,6 +24,7 @@ use crate::{
 };
 
 pub const SETTING_KEY: &str = "syncEnabled";
+pub const IMAGES_SETTING_KEY: &str = "syncImages";
 
 pub struct SyncRuntime {
     app_data_dir: PathBuf,
@@ -56,13 +57,25 @@ impl SyncRuntime {
         }
     }
 
-    /// Whether the user turned sync on. `save_setting` stores values as strings.
+    /// Whether the user turned sync on. Off unless set.
     pub fn is_enabled(&self) -> bool {
-        std::fs::read_to_string(self.app_data_dir.join("settings.json"))
-            .ok()
-            .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
-            .and_then(|settings| settings.get(SETTING_KEY).cloned())
-            .is_some_and(|value| value == "true" || value == true)
+        self.flag(SETTING_KEY).unwrap_or(false)
+    }
+
+    /// Whether images sync too, once sync is on. On unless turned off.
+    pub fn syncs_images(&self) -> bool {
+        self.flag(IMAGES_SETTING_KEY).unwrap_or(true)
+    }
+
+    /// A true/false setting. `save_setting` stores values as strings.
+    fn flag(&self, key: &str) -> Option<bool> {
+        let contents = std::fs::read_to_string(self.app_data_dir.join("settings.json")).ok()?;
+        let settings: serde_json::Value = serde_json::from_str(&contents).ok()?;
+        match settings.get(key)? {
+            serde_json::Value::Bool(value) => Some(*value),
+            serde_json::Value::String(value) => Some(value == "true"),
+            _ => None,
+        }
     }
 
     pub fn service(&self) -> Option<Arc<SyncService>> {
@@ -105,6 +118,7 @@ impl SyncRuntime {
             .map_err(|e| eprintln!("Sync discovery unavailable, connect by IP instead: {e}"))
             .ok();
         let service = SyncService::new(store, store_path, SYNC_PORT, hooks(app, discovery.clone()));
+        service.set_syncing_images(self.syncs_images());
         let listener = tauri::async_runtime::spawn(service.clone().listen(listener));
         println!("Sync listening on port {SYNC_PORT}");
 
@@ -291,6 +305,24 @@ mod tests {
     fn sync_is_off_when_the_setting_is_the_string_false() {
         let (_dir, runtime) = runtime_with_settings(r#"{"syncEnabled":"false"}"#);
         assert!(!runtime.is_enabled());
+    }
+
+    #[test]
+    fn images_sync_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(SyncRuntime::new(dir.path()).syncs_images());
+    }
+
+    #[test]
+    fn images_stop_syncing_when_turned_off() {
+        let (_dir, runtime) = runtime_with_settings(r#"{"syncImages":"false"}"#);
+        assert!(!runtime.syncs_images());
+    }
+
+    #[test]
+    fn a_malformed_image_setting_falls_back_to_on() {
+        let (_dir, runtime) = runtime_with_settings(r#"{"syncImages":42}"#);
+        assert!(runtime.syncs_images());
     }
 
     #[test]

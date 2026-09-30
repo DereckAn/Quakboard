@@ -81,6 +81,8 @@ pub struct SyncService {
     /// One pairing at a time, so a device on the LAN can't stack up prompts.
     is_pairing: AtomicBool,
     accepts_pairing: AtomicBool,
+    /// The user's "Also sync images" setting; covers sending and receiving.
+    syncs_images: AtomicBool,
     /// Text of the last received clip. Writing it to the clipboard makes the
     /// monitor see it as a new copy; this stops that one copy being sent back.
     last_received: Mutex<Option<String>>,
@@ -103,6 +105,7 @@ impl SyncService {
             listen_port,
             is_pairing: AtomicBool::new(false),
             accepts_pairing: AtomicBool::new(false),
+            syncs_images: AtomicBool::new(true),
             last_received: Mutex::new(None),
             last_received_image: Mutex::new(None),
             hooks,
@@ -143,6 +146,9 @@ impl SyncService {
     /// Send a copied image to every paired device, like `broadcast`. The
     /// monitor checks `take_image_echo` first, before even storing it.
     pub async fn broadcast_image(&self, png: &[u8], details: ImageDetails) -> usize {
+        if !self.is_syncing_images() {
+            return 0;
+        }
         if png.len() > MAX_IMAGE_BYTES {
             eprintln!(
                 "Not syncing a {} MB image: the limit is {} MB",
@@ -279,6 +285,14 @@ impl SyncService {
         self.accepts_pairing.store(accepting, Ordering::SeqCst);
     }
 
+    pub fn set_syncing_images(&self, enabled: bool) {
+        self.syncs_images.store(enabled, Ordering::SeqCst);
+    }
+
+    pub fn is_syncing_images(&self) -> bool {
+        self.syncs_images.load(Ordering::SeqCst)
+    }
+
     pub fn peers(&self) -> Vec<Peer> {
         lock(&self.store).peers.clone()
     }
@@ -333,6 +347,12 @@ impl SyncService {
         let Frame::Image { from, .. } = &frame else {
             return;
         };
+        // Hang up before reading the body: no point downloading what the user
+        // chose not to receive.
+        if !self.is_syncing_images() {
+            eprintln!("Ignored image from {from_addr}: image sync is off");
+            return;
+        }
         // Check the sender before reading the body, so an unpaired device
         // can't make us download 20 MB just to throw it away.
         let peer = lock(&self.store).peer(from).map(|p| (p.key, p.name.clone()));
@@ -970,6 +990,33 @@ mod tests {
         next_image(&mut b).await;
 
         assert_eq!(b.service.broadcast(clip("ping")).await, 0);
+    }
+
+    #[tokio::test]
+    async fn no_image_is_sent_while_image_sync_is_off() {
+        let (a, _b) = paired_devices().await;
+        a.service.set_syncing_images(false);
+
+        assert_eq!(a.service.broadcast_image(&png_of(4, 3), details(4, 3)).await, 0);
+    }
+
+    #[tokio::test]
+    async fn incoming_image_is_ignored_while_image_sync_is_off() {
+        let (a, mut b) = paired_devices().await;
+        b.service.set_syncing_images(false);
+        a.service.broadcast_image(&png_of(4, 3), details(4, 3)).await;
+
+        assert_eq!(next_image(&mut b).await, None);
+    }
+
+    #[tokio::test]
+    async fn text_still_syncs_while_image_sync_is_off() {
+        let (a, mut b) = paired_devices().await;
+        a.service.set_syncing_images(false);
+        b.service.set_syncing_images(false);
+        a.service.broadcast(clip("text only")).await;
+
+        assert_eq!(next_clip(&mut b).await, Some(clip("text only")));
     }
 
     #[tokio::test]

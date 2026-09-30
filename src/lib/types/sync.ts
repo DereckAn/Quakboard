@@ -5,6 +5,10 @@ export interface SyncStatus {
   shortId: string | null;
   /** This device's LAN IPs, to type on the other device. */
   addresses: string[];
+  /** The "Also sync images" setting. */
+  syncImages: boolean;
+  /** Largest image that syncs, from the backend's own limit. */
+  maxImageBytes: number;
 }
 
 export interface SyncPeer {

@@ -3,8 +3,9 @@ use tauri::{AppHandle, State};
 
 use crate::commands::settings::save_setting;
 use crate::sync::{
+    body::MAX_IMAGE_BYTES,
     discovery::short_id,
-    runtime::{local_addresses, SyncRuntime, SETTING_KEY},
+    runtime::{local_addresses, SyncRuntime, IMAGES_SETTING_KEY, SETTING_KEY},
 };
 
 #[derive(Serialize)]
@@ -16,6 +17,9 @@ pub struct SyncStatus {
     short_id: Option<String>,
     /// This device's LAN IPs, for connecting by IP from the other device.
     addresses: Vec<String>,
+    sync_images: bool,
+    /// So the UI shows the real limit, not a copy that can drift.
+    max_image_bytes: usize,
 }
 
 /// A paired device as the UI sees it. Deliberately has no key.
@@ -40,6 +44,8 @@ fn status(runtime: &SyncRuntime) -> SyncStatus {
     SyncStatus {
         enabled: runtime.is_enabled(),
         running: identity.is_some(),
+        sync_images: runtime.syncs_images(),
+        max_image_bytes: MAX_IMAGE_BYTES,
         addresses: if identity.is_some() { local_addresses() } else { Vec::new() },
         short_id: identity.as_ref().map(|(id, _)| short_id(id).to_string()),
         device_name: identity.map(|(_, name)| name),
@@ -64,6 +70,20 @@ pub async fn sync_set_enabled(
         runtime.stop();
     }
     save_setting(app, SETTING_KEY.into(), enabled.to_string())?;
+    Ok(status(&runtime))
+}
+
+/// Works while sync is off too, so the choice is remembered for later.
+#[tauri::command]
+pub fn sync_set_images_enabled(
+    app: AppHandle,
+    runtime: State<'_, SyncRuntime>,
+    enabled: bool,
+) -> Result<SyncStatus, String> {
+    save_setting(app, IMAGES_SETTING_KEY.into(), enabled.to_string())?;
+    if let Some(service) = runtime.service() {
+        service.set_syncing_images(enabled);
+    }
     Ok(status(&runtime))
 }
 
