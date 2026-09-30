@@ -17,12 +17,17 @@
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // Capture phase + stop: Esc closes only the modal, not the page
+        // shortcuts listening on window (e.g. settings' Esc-to-go-back).
+        e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
   });
 
   const handleBackdropClick = (e: MouseEvent) => {
@@ -32,6 +37,9 @@
   };
 
   const handleBackdropKeyDown = (e: KeyboardEvent) => {
+    // Keys typed in the modal's own inputs bubble up here; only the
+    // backdrop itself should close on Enter/Space.
+    if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onClose();

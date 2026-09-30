@@ -6,6 +6,7 @@ mod colors;
 mod commands;
 mod db;
 mod shortcuts;
+mod sync;
 
 use clipboard::{spawn_clipboard_listener, ClipboardMonitor};
 use commands::AppState;
@@ -202,6 +203,20 @@ pub fn run() {
                 images_dir: images_dir_str,
                 app_data_dir: app_data_dir_str,
             }));
+
+            // Always registered, so the Devices screen can turn sync on later.
+            let sync_runtime = sync::runtime::SyncRuntime::new(&app_data_dir);
+            let start_sync = sync_runtime.is_enabled();
+            app.manage(sync_runtime);
+            if start_sync {
+                let sync_app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let runtime = sync_app.state::<sync::runtime::SyncRuntime>();
+                    if let Err(e) = runtime.start(&sync_app).await {
+                        eprintln!("Failed to start LAN sync: {e}");
+                    }
+                });
+            }
 
             let app_handle = app.handle().clone();
             let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -453,6 +468,16 @@ pub fn run() {
             commands::capture_full_screenshot,
             commands::capture_region_screenshot,
             commands::get_platform,
+            commands::sync_get_status,
+            commands::sync_set_enabled,
+            commands::sync_list_peers,
+            commands::sync_list_nearby,
+            commands::sync_set_accepting_pairing,
+            commands::sync_pair_start,
+            commands::sync_pair_by_address,
+            commands::sync_pair_submit_code,
+            commands::sync_pair_cancel,
+            commands::sync_unpair,
             commands::update_screenshot_hotkeys,
             commands::unregister_screenshot_hotkeys,
         ])

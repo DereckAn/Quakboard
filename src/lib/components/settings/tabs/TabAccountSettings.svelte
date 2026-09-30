@@ -2,6 +2,7 @@
   import Icon from "$lib/components/icons/Icon.svelte";
   import Button from "$lib/components/ui/Button.svelte";
   import Input from "$lib/components/ui/Input.svelte";
+  import DevicesSection from "../DevicesSection.svelte";
 </script>
 
 <section class="bg-surface rounded-2xl border border-border/60 p-3 relative">
@@ -34,3 +35,5 @@
     </div>
   </div>
 </section>
+
+<DevicesSection />

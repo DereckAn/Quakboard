@@ -9,6 +9,7 @@ use crate::clipboard::state;
 use crate::clipboard::types::{detect_code_language, detect_content_type, get_source_app};
 use crate::db::models::CreateClipboardItemDto;
 use crate::db::repository::ClipboardRepository;
+use crate::sync::{runtime::SyncRuntime, ClipPayload};
 use std::{
     fs,
     sync::Arc,
@@ -287,6 +288,21 @@ impl ClipboardMonitor {
                                 if let Err(e) = self.app_handle.emit("clipboard-item-added", &item)
                                 {
                                     eprintln!("Failed to emit clipboard-item-added event: {e}");
+                                }
+
+                                // Only running while the user has sync turned on.
+                                let sync = self
+                                    .app_handle
+                                    .try_state::<SyncRuntime>()
+                                    .and_then(|runtime| runtime.service());
+                                if let Some(sync) = sync {
+                                    let clip = ClipPayload {
+                                        text: current_text.clone(),
+                                        content_type: item.content_type.clone(),
+                                    };
+                                    tauri::async_runtime::spawn(async move {
+                                        sync.broadcast(clip).await;
+                                    });
                                 }
                             }
                             Err(e) => eprintln!("Failed to upsert clipboard item: {e}"),
