@@ -9,10 +9,13 @@
 // or opens images until step 5. Drop this allow then.
 #![allow(dead_code)]
 
+use std::io::Cursor;
+
 use chacha20poly1305::{
     aead::{Aead, Generate, KeyInit, Payload},
     ChaCha20Poly1305, Nonce,
 };
+use image::{error::ImageError, ImageFormat, ImageReader, Limits};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -20,6 +23,23 @@ use super::{body::MAX_IMAGE_BYTES, Frame, PeerKey, Sealed, SyncError};
 
 const NONCE_BYTES: usize = 12;
 const TAG_BYTES: usize = 16;
+
+/// Widest or tallest image accepted, well past any real screen.
+const MAX_DIMENSION: u32 = 16_384;
+/// Memory a decoded image may take as RGBA. A small PNG can declare a huge
+/// image (a "decompression bomb"), so this is checked before allocating.
+const MAX_RGBA_BYTES: u64 = 256 * 1024 * 1024;
+pub const TOO_LARGE_TO_DECODE: &str = "image is too large to decode";
+
+/// A received PNG that decoded safely. The pixels themselves are dropped;
+/// storing uses the original PNG bytes, so its hash matches the sender's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodedImage {
+    pub width: u32,
+    pub height: u32,
+    /// See `pixel_hash`.
+    pub pixel_hash: String,
+}
 
 /// What the sender knows about an image besides its bytes.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -103,6 +123,55 @@ pub fn open_image(
         ));
     }
     Ok((meta, png))
+}
+
+/// Check that `png` really is a PNG of the size its header claims, without
+/// letting it exhaust memory. CPU-heavy for big images: callers run it off
+/// the async workers.
+pub fn decode_png(png: &[u8], meta: &ImageMeta) -> Result<DecodedImage, SyncError> {
+    // Forcing the PNG decoder rejects every other format, even valid images.
+    let mut reader = ImageReader::with_format(Cursor::new(png), ImageFormat::Png);
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_DIMENSION);
+    limits.max_image_height = Some(MAX_DIMENSION);
+    limits.max_alloc = Some(MAX_RGBA_BYTES);
+    reader.limits(limits);
+
+    let image = reader.decode().map_err(|e| match e {
+        ImageError::Limits(_) => SyncError::Malformed(TOO_LARGE_TO_DECODE.into()),
+        other => SyncError::Malformed(format!("not a usable PNG: {other}")),
+    })?;
+
+    let (width, height) = (image.width(), image.height());
+    if (width, height) != (meta.width, meta.height) {
+        return Err(SyncError::Integrity(format!(
+            "image is {width}x{height}, header says {}x{}",
+            meta.width, meta.height
+        )));
+    }
+    // The decode limit doesn't cover converting to RGBA, which can quadruple
+    // the size of a grayscale image; check before converting.
+    if u64::from(width) * u64::from(height) * 4 > MAX_RGBA_BYTES {
+        return Err(SyncError::Malformed(TOO_LARGE_TO_DECODE.into()));
+    }
+
+    let rgba = image.into_rgba8();
+    Ok(DecodedImage {
+        width,
+        height,
+        pixel_hash: pixel_hash(width, height, rgba.as_raw()),
+    })
+}
+
+/// Identifies an image by its pixels rather than its file bytes: the same
+/// picture re-encoded on its way through a clipboard keeps its pixel hash.
+/// `rgba` is 8-bit RGBA, row by row, as `arboard::ImageData` holds it.
+pub fn pixel_hash(width: u32, height: u32, rgba: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(width.to_le_bytes());
+    hasher.update(height.to_le_bytes());
+    hasher.update(rgba);
+    format!("{:x}", hasher.finalize())
 }
 
 fn meta_aad(from: &str) -> String {
@@ -335,6 +404,165 @@ mod tests {
             open_image(&Frame::PairDone, &[], &KEY),
             Err(SyncError::Malformed(_))
         ));
+    }
+
+    fn encode(image: image::DynamicImage, format: ImageFormat) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        image.write_to(&mut Cursor::new(&mut bytes), format).unwrap();
+        bytes
+    }
+
+    /// A 3x2 RGBA image with every pixel different.
+    fn rgba_pixels() -> Vec<u8> {
+        (0..3 * 2 * 4).map(|i| (i * 11) as u8).collect()
+    }
+
+    fn rgba_png() -> Vec<u8> {
+        let image = image::RgbaImage::from_raw(3, 2, rgba_pixels()).unwrap();
+        encode(image.into(), ImageFormat::Png)
+    }
+
+    fn meta_for(width: u32, height: u32) -> ImageMeta {
+        ImageMeta {
+            width,
+            height,
+            byte_len: 0,
+            sha256: String::new(),
+            is_screenshot: false,
+        }
+    }
+
+    /// A PNG of a few dozen bytes claiming `width` x `height`: tiny on the
+    /// wire, enormous if a decoder believed it and allocated.
+    fn png_claiming(width: u32, height: u32) -> Vec<u8> {
+        fn crc32(bytes: &[u8]) -> u32 {
+            let mut crc = 0xFFFF_FFFFu32;
+            for &byte in bytes {
+                crc ^= u32::from(byte);
+                for _ in 0..8 {
+                    crc = if crc & 1 == 1 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+                }
+            }
+            !crc
+        }
+        fn chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+            let mut out = (data.len() as u32).to_be_bytes().to_vec();
+            let mut body = kind.to_vec();
+            body.extend_from_slice(data);
+            out.extend_from_slice(&body);
+            out.extend_from_slice(&crc32(&body).to_be_bytes());
+            out
+        }
+
+        let mut header = Vec::new();
+        header.extend_from_slice(&width.to_be_bytes());
+        header.extend_from_slice(&height.to_be_bytes());
+        header.extend_from_slice(&[8, 6, 0, 0, 0]); // 8-bit RGBA, no interlace
+
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend(chunk(b"IHDR", &header));
+        // A few bytes of "image data": decoders read up to the first IDAT
+        // before sizing the image, and a real bomb always has one.
+        png.extend(chunk(b"IDAT", &[0x78, 0x9c, 0x03, 0x00]));
+        png.extend(chunk(b"IEND", &[]));
+        png
+    }
+
+    #[test]
+    fn decoded_png_has_the_pixel_hash_of_its_raw_pixels() {
+        let decoded = decode_png(&rgba_png(), &meta_for(3, 2)).unwrap();
+        assert_eq!(decoded.pixel_hash, pixel_hash(3, 2, &rgba_pixels()));
+    }
+
+    #[test]
+    fn png_without_alpha_hashes_like_its_opaque_rgba_pixels() {
+        let rgb: Vec<u8> = (0..3 * 2 * 3).map(|i| (i * 7) as u8).collect();
+        let opaque_rgba: Vec<u8> = rgb.chunks(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+        let png = encode(
+            image::RgbImage::from_raw(3, 2, rgb).unwrap().into(),
+            ImageFormat::Png,
+        );
+
+        let decoded = decode_png(&png, &meta_for(3, 2)).unwrap();
+        assert_eq!(decoded.pixel_hash, pixel_hash(3, 2, &opaque_rgba));
+    }
+
+    #[test]
+    fn valid_jpeg_is_rejected() {
+        let rgb = image::RgbImage::from_pixel(3, 2, image::Rgb([10, 20, 30]));
+        let jpeg = encode(rgb.into(), ImageFormat::Jpeg);
+
+        assert!(matches!(
+            decode_png(&jpeg, &meta_for(3, 2)),
+            Err(SyncError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn garbage_is_rejected() {
+        assert!(matches!(
+            decode_png(b"definitely not a picture", &meta_for(3, 2)),
+            Err(SyncError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn truncated_png_is_rejected() {
+        let png = rgba_png();
+        assert!(matches!(
+            decode_png(&png[..png.len() / 2], &meta_for(3, 2)),
+            Err(SyncError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn too_wide_image_is_rejected_before_decoding() {
+        assert_eq!(
+            decode_png(&png_claiming(MAX_DIMENSION + 1, 1), &meta_for(MAX_DIMENSION + 1, 1)),
+            Err(SyncError::Malformed(TOO_LARGE_TO_DECODE.into()))
+        );
+    }
+
+    #[test]
+    fn decompression_bomb_is_rejected_before_allocating() {
+        // Within the dimension cap, but 9000x9000 RGBA is ~324 MB.
+        assert_eq!(
+            decode_png(&png_claiming(9000, 9000), &meta_for(9000, 9000)),
+            Err(SyncError::Malformed(TOO_LARGE_TO_DECODE.into()))
+        );
+    }
+
+    #[test]
+    fn grayscale_image_too_large_once_converted_to_rgba_is_rejected() {
+        // 9000x9000 grayscale decodes within the limit (81 MB), but its RGBA
+        // form (~324 MB) wouldn't; the conversion must be refused.
+        let gray = image::GrayImage::new(9000, 9000);
+        let png = encode(gray.into(), ImageFormat::Png);
+
+        assert_eq!(
+            decode_png(&png, &meta_for(9000, 9000)),
+            Err(SyncError::Malformed(TOO_LARGE_TO_DECODE.into()))
+        );
+    }
+
+    #[test]
+    fn size_that_differs_from_the_header_fails_the_integrity_check() {
+        assert!(matches!(
+            decode_png(&rgba_png(), &meta_for(2, 3)),
+            Err(SyncError::Integrity(_))
+        ));
+    }
+
+    #[test]
+    fn one_changed_pixel_changes_the_pixel_hash() {
+        let mut changed = rgba_pixels();
+        changed[0] ^= 1;
+        assert_ne!(pixel_hash(3, 2, &changed), pixel_hash(3, 2, &rgba_pixels()));
+    }
+
+    #[test]
+    fn same_bytes_at_another_size_have_another_pixel_hash() {
+        assert_ne!(pixel_hash(2, 3, &rgba_pixels()), pixel_hash(3, 2, &rgba_pixels()));
     }
 
     #[test]
