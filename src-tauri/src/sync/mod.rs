@@ -20,6 +20,7 @@ pub mod received;
 pub mod runtime;
 pub mod service;
 pub mod store;
+pub mod stream;
 pub mod transport;
 
 /// Symmetric key shared by two paired devices.
