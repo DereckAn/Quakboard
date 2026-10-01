@@ -49,6 +49,9 @@ pub struct StreamSummary {
 
 /// Encrypt everything `source` yields and send it on `sink`. `context`
 /// names the transfer (offer and sender); the receiver must pass the same.
+///
+/// Reads `source` to its end: callers pass a file limited to the offered
+/// size (`File::take`), or a file still being written streams forever.
 pub async fn send_stream<R, W>(
     source: &mut R,
     sink: &mut W,

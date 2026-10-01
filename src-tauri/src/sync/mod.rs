@@ -15,6 +15,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 pub mod body;
 pub mod discovery;
 pub mod image;
+pub mod offers;
 pub mod pairing;
 pub mod received;
 pub mod runtime;
@@ -53,6 +54,8 @@ pub enum Frame {
     PairDone,
     /// Followed on the same connection by the encrypted PNG as a raw body.
     Image { from: String, meta: Sealed },
+    /// A file the sender lets this device fetch; see `offers`.
+    FileOffer { from: String, offer: Sealed },
 }
 
 #[derive(Debug, PartialEq)]
