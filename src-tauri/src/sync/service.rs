@@ -201,15 +201,17 @@ impl SyncService {
                 let outgoing = match seal(&store.device_id, &peer.key) {
                     Ok(outgoing) => outgoing,
                     Err(e) => {
-                        eprintln!("Could not seal for {}: {e}", peer.id);
+                        eprintln!("Could not seal for {}: {e}", peer.name);
                         continue;
                     }
                 };
                 let peer_id = peer.id.clone();
+                let peer_name = peer.name.clone();
                 let last_addr = peer.last_addr.clone();
                 let resolve_addr = self.hooks.resolve_addr.clone();
                 sends.spawn(async move {
-                    let delivery = deliver(&peer_id, last_addr, &outgoing, &resolve_addr).await;
+                    let delivery =
+                        deliver(&peer_id, &peer_name, last_addr, &outgoing, &resolve_addr).await;
                     (peer_id, delivery)
                 });
             }
@@ -252,15 +254,16 @@ impl SyncService {
         if store.peer(peer_id).and_then(|p| p.last_addr.as_deref()) == Some(addr) {
             return;
         }
+        let name = store.peer(peer_id).map_or_else(|| peer_id.to_string(), |p| p.name.clone());
         let mut updated = store.clone();
         updated.set_last_addr(peer_id, addr);
         match updated.save(&self.store_path) {
             Ok(()) => {
                 *store = updated;
-                println!("Sync now reaches {peer_id} at {addr}");
+                println!("Sync now reaches {name} at {addr}");
             }
             // Still usable this session via the lookup; retried next time.
-            Err(e) => eprintln!("Could not save new address for {peer_id}: {e}"),
+            Err(e) => eprintln!("Could not save new address for {name}: {e}"),
         }
     }
 
@@ -370,14 +373,14 @@ impl SyncService {
         let body = match read_body(stream, IMAGE_BODY_LIMITS).await {
             Ok(body) => body,
             Err(e) => {
-                eprintln!("Dropped image from {from} at {from_addr}: {e}");
+                eprintln!("Dropped image from {from_name} at {from_addr}: {e}");
                 return;
             }
         };
         let (meta, png) = match open_image(&frame, &body, &key) {
             Ok(opened) => opened,
             Err(e) => {
-                eprintln!("Dropped image from {from} at {from_addr}: {e}");
+                eprintln!("Dropped image from {from_name} at {from_addr}: {e}");
                 return;
             }
         };
@@ -391,11 +394,11 @@ impl SyncService {
         let (png, meta, decoded) = match decoded {
             Ok(Ok(decoded)) => decoded,
             Ok(Err(e)) => {
-                eprintln!("Dropped image from {from} at {from_addr}: {e}");
+                eprintln!("Dropped image from {from_name} at {from_addr}: {e}");
                 return;
             }
             Err(e) => {
-                eprintln!("Image decoding for {from} failed to run: {e}");
+                eprintln!("Image decoding for {from_name} failed to run: {e}");
                 return;
             }
         };
@@ -421,8 +424,8 @@ impl SyncService {
             return;
         };
 
-        let key = lock(&self.store).peer(from).map(|peer| peer.key);
-        let Some(key) = key else {
+        let peer = lock(&self.store).peer(from).map(|p| (p.key, p.name.clone()));
+        let Some((key, from_name)) = peer else {
             eprintln!("Dropped clip from unpaired device at {from_addr}");
             return;
         };
@@ -432,14 +435,10 @@ impl SyncService {
                 *lock(&self.last_received) = Some(clip.text.clone());
                 // Decrypting proved the sender, so its current IP is trustworthy.
                 self.learn_ip(from, from_addr.ip());
-                let from_name = lock(&self.store).peer(from).map(|p| p.name.clone());
-                println!(
-                    "Sync received text from {}",
-                    from_name.as_deref().unwrap_or(from)
-                );
+                println!("Sync received text from {from_name}");
                 (self.hooks.apply_clip)(clip);
             }
-            Err(e) => eprintln!("Dropped clip from {from} at {from_addr}: {e}"),
+            Err(e) => eprintln!("Dropped clip from {from_name} at {from_addr}: {e}"),
         }
     }
 
@@ -514,6 +513,7 @@ async fn send(addr: &str, outgoing: &Outgoing) -> std::io::Result<()> {
 
 async fn deliver(
     peer_id: &str,
+    peer_name: &str,
     last_addr: Option<String>,
     outgoing: &Outgoing,
     resolve_addr: &ResolveAddr,
@@ -521,7 +521,7 @@ async fn deliver(
     if let Some(addr) = &last_addr {
         match send(addr, outgoing).await {
             Ok(()) => return Delivery::Reached,
-            Err(e) => eprintln!("Could not reach {peer_id} at {addr}: {e}"),
+            Err(e) => eprintln!("Could not reach {peer_name} at {addr}: {e}"),
         }
     }
 
@@ -535,7 +535,7 @@ async fn deliver(
     match send(&found, outgoing).await {
         Ok(()) => Delivery::ReachedAt(found),
         Err(e) => {
-            eprintln!("Could not reach {peer_id} at {found} either: {e}");
+            eprintln!("Could not reach {peer_name} at {found} either: {e}");
             Delivery::Missed
         }
     }

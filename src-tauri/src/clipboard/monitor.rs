@@ -29,7 +29,8 @@ use tokio::sync::Mutex;
 pub struct ClipboardMonitor {
     event_rx: Mutex<Option<UnboundedReceiver<ClipboardEvent>>>,
     last_text_content: Arc<Mutex<String>>,
-    last_image_hash: Arc<Mutex<Option<Vec<u8>>>>,
+    /// Last image seen and when, to drop duplicate events for one copy.
+    last_image_hash: Arc<Mutex<Option<SeenImage>>>,
     last_file_path: Arc<Mutex<Option<(std::path::PathBuf, Instant)>>>,
     repo_path: String,
     images_dir: std::path::PathBuf,
@@ -330,12 +331,11 @@ impl ClipboardMonitor {
 
                 {
                     let mut last_hash = self.last_image_hash.lock().await;
-                    if let Some(previous_hash) = last_hash.as_ref() {
-                        if *previous_hash == current_hash {
-                            return;
-                        }
+                    let now = Instant::now();
+                    if is_repeat_image_event(last_hash.as_ref(), &current_hash, now) {
+                        return;
                     }
-                    *last_hash = Some(current_hash.clone());
+                    *last_hash = Some((current_hash.clone(), now));
                 }
 
                 // An image a paired device just sent was already stored by the
@@ -753,4 +753,50 @@ fn sync_pixels(sync: Arc<SyncService>, image: arboard::ImageData<'static>, is_sc
             Err(e) => eprintln!("Image encoding for sync failed to run: {e}"),
         }
     });
+}
+
+/// One copy can fire several clipboard events within milliseconds (Wayland
+/// does); those are dropped. The same picture copied again later is a new
+/// copy: it moves up in history and syncs again, e.g. to a device that was
+/// offline the first time.
+const REPEAT_IMAGE_WINDOW: Duration = Duration::from_secs(1);
+
+/// An image's hash and when the monitor saw it.
+type SeenImage = (Vec<u8>, Instant);
+
+fn is_repeat_image_event(last: Option<&SeenImage>, hash: &[u8], now: Instant) -> bool {
+    last.is_some_and(|(last_hash, seen_at)| {
+        last_hash.as_slice() == hash && now.duration_since(*seen_at) < REPEAT_IMAGE_WINDOW
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_image_within_the_window_is_a_repeat_event() {
+        let now = Instant::now();
+        let last = (vec![1, 2, 3], now);
+        assert!(is_repeat_image_event(Some(&last), &[1, 2, 3], now + Duration::from_millis(200)));
+    }
+
+    #[test]
+    fn same_image_copied_again_later_is_a_new_copy() {
+        let now = Instant::now();
+        let last = (vec![1, 2, 3], now);
+        assert!(!is_repeat_image_event(Some(&last), &[1, 2, 3], now + Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn different_image_is_never_a_repeat() {
+        let now = Instant::now();
+        let last = (vec![1, 2, 3], now);
+        assert!(!is_repeat_image_event(Some(&last), &[9, 9, 9], now));
+    }
+
+    #[test]
+    fn first_image_is_not_a_repeat() {
+        assert!(!is_repeat_image_event(None, &[1, 2, 3], Instant::now()));
+    }
 }
