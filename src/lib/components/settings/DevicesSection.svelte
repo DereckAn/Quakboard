@@ -3,6 +3,7 @@
   import Button from "$lib/components/ui/Button.svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
   import {
+    tauriSyncChooseDownloadDir,
     tauriSyncGetDownloadDir,
     tauriSyncGetStatus,
     tauriSyncListNearby,
@@ -12,7 +13,6 @@
     tauriSyncPairStart,
     tauriSyncPairSubmitCode,
     tauriSyncSetAcceptingPairing,
-    tauriSyncSetDownloadDir,
     tauriSyncSetEnabled,
     tauriSyncSetImagesEnabled,
     tauriSyncUnpair,
@@ -24,7 +24,6 @@
     SyncStatus,
   } from "$lib/types";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { open } from "@tauri-apps/plugin-dialog";
   import { onDestroy, onMount } from "svelte";
 
   const REFRESH_INTERVAL_MS = 2000;
@@ -123,15 +122,10 @@
   async function handleChangeDownloadDir() {
     errorMessage = null;
     try {
-      const picked = await open({
-        directory: true,
-        multiple: false,
-        defaultPath: downloadDir ?? undefined,
-        title: "Where should fetched files go?",
-      });
-      if (typeof picked === "string") {
-        downloadDir = await tauriSyncSetDownloadDir(picked);
-      }
+      // The picker runs in the backend, which keeps the window from
+      // auto-hiding while the dialog has the focus.
+      const chosen = await tauriSyncChooseDownloadDir();
+      if (chosen) downloadDir = chosen;
     } catch (err) {
       errorMessage = describe(err);
     }

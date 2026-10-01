@@ -512,6 +512,7 @@ export async function tauriSyncGetDownloadDir(): Promise<string> {
   return await invoke<string>("sync_get_download_dir");
 }
 
-export async function tauriSyncSetDownloadDir(path: string): Promise<string> {
-  return await invoke<string>("sync_set_download_dir", { path });
+/** Shows a folder picker; resolves to the folder saved, or null if closed. */
+export async function tauriSyncChooseDownloadDir(): Promise<string | null> {
+  return await invoke<string | null>("sync_choose_download_dir");
 }

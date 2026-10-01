@@ -14,6 +14,32 @@ lazy_static::lazy_static! {
     // When the capture-folder watcher owns screenshots, the clipboard monitor
     // skips saving raw screenshot bytes so we don't get a duplicate entry.
     static ref SUPPRESS_SCREENSHOT_BYTES: AtomicBool = AtomicBool::new(false);
+    // Set while one of our own dialogs is open: the window loses focus to it
+    // and must not auto-hide, or the dialog ends up orphaned behind it.
+    static ref KEEP_WINDOW_OPEN: AtomicBool = AtomicBool::new(false);
+}
+
+/// Whether the window should stay up despite losing focus (a dialog of ours
+/// has it). See `KeepWindowOpen`.
+pub fn should_keep_window_open() -> bool {
+    KEEP_WINDOW_OPEN.load(Ordering::SeqCst)
+}
+
+/// Keeps the window from auto-hiding while alive; resets however the
+/// dialog ends (chosen, cancelled, or an error).
+pub struct KeepWindowOpen;
+
+impl KeepWindowOpen {
+    pub fn new() -> Self {
+        KEEP_WINDOW_OPEN.store(true, Ordering::SeqCst);
+        KeepWindowOpen
+    }
+}
+
+impl Drop for KeepWindowOpen {
+    fn drop(&mut self) {
+        KEEP_WINDOW_OPEN.store(false, Ordering::SeqCst);
+    }
 }
 
 /// Enable/disable suppression of raw clipboard screenshot bytes.
@@ -116,6 +142,15 @@ mod tests {
         let mut window = SkipWindow::default();
         window.request(count, now);
         window
+    }
+
+    #[test]
+    fn window_stays_open_only_while_the_guard_lives() {
+        let during = {
+            let _guard = KeepWindowOpen::new();
+            should_keep_window_open()
+        };
+        assert_eq!((during, should_keep_window_open()), (true, false));
     }
 
     #[test]

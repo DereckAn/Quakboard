@@ -199,8 +199,44 @@ pub fn sync_get_download_dir(app: AppHandle, runtime: State<'_, SyncRuntime>) ->
     sharing::download_dir(&app, &runtime).map(|dir| dir.to_string_lossy().to_string())
 }
 
+/// Show a folder picker for the download folder. Returns the folder saved,
+/// or None if the user closed the picker. Runs the dialog from here rather
+/// than the web view so the window can be kept from auto-hiding meanwhile.
 #[tauri::command]
-pub fn sync_set_download_dir(app: AppHandle, path: String) -> Result<String, String> {
+pub async fn sync_choose_download_dir(
+    app: AppHandle,
+    runtime: State<'_, SyncRuntime>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let current = sharing::download_dir(&app, &runtime).ok();
+    let picker_app = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        let _keep_open = crate::clipboard::state::KeepWindowOpen::new();
+        let mut dialog = picker_app
+            .dialog()
+            .file()
+            .set_title("Where should fetched files go?");
+        if let Some(dir) = current.filter(|dir| dir.is_dir()) {
+            dialog = dialog.set_directory(dir);
+        }
+        dialog.blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = picked
+        .as_path()
+        .ok_or("Choose a folder on this computer")?
+        .to_string_lossy()
+        .to_string();
+    use_download_dir(app, &path).map(Some)
+}
+
+fn use_download_dir(app: AppHandle, path: &str) -> Result<String, String> {
     let dir = std::path::PathBuf::from(path.trim());
     if !dir.is_absolute() {
         return Err("Choose a full folder path".into());
