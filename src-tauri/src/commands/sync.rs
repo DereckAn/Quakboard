@@ -200,40 +200,18 @@ pub fn sync_get_download_dir(app: AppHandle, runtime: State<'_, SyncRuntime>) ->
 }
 
 /// Show a folder picker for the download folder. Returns the folder saved,
-/// or None if the user closed the picker. Runs the dialog from here rather
-/// than the web view so the window can be kept from auto-hiding meanwhile.
+/// or None if the user closed the picker.
 #[tauri::command]
 pub async fn sync_choose_download_dir(
     app: AppHandle,
     runtime: State<'_, SyncRuntime>,
 ) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
     let current = sharing::download_dir(&app, &runtime).ok();
-    let picker_app = app.clone();
-    let picked = tauri::async_runtime::spawn_blocking(move || {
-        let _keep_open = crate::clipboard::state::KeepWindowOpen::new();
-        let mut dialog = picker_app
-            .dialog()
-            .file()
-            .set_title("Where should fetched files go?");
-        if let Some(dir) = current.filter(|dir| dir.is_dir()) {
-            dialog = dialog.set_directory(dir);
-        }
-        dialog.blocking_pick_folder()
-    })
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let Some(picked) = picked else {
-        return Ok(None);
-    };
-    let path = picked
-        .as_path()
-        .ok_or("Choose a folder on this computer")?
-        .to_string_lossy()
-        .to_string();
-    use_download_dir(app, &path).map(Some)
+    let picked = crate::commands::dialogs::pick_folder(&app, "Where should fetched files go?", current).await?;
+    match picked {
+        Some(path) => use_download_dir(app, &path.to_string_lossy()).map(Some),
+        None => Ok(None),
+    }
 }
 
 fn use_download_dir(app: AppHandle, path: &str) -> Result<String, String> {

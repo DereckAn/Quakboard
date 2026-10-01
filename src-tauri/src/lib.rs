@@ -487,6 +487,7 @@ pub fn run() {
             commands::sync_cancel_fetch,
             commands::sync_get_download_dir,
             commands::sync_choose_download_dir,
+            commands::choose_folder,
             commands::update_screenshot_hotkeys,
             commands::unregister_screenshot_hotkeys,
         ])

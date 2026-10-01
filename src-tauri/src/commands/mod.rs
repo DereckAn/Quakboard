@@ -1,5 +1,6 @@
 pub mod clipboard;
 pub mod colors;
+pub mod dialogs;
 pub mod hotkey;
 pub mod images;
 pub mod links;
@@ -10,6 +11,7 @@ pub mod sync;
 
 pub use clipboard::*;
 pub use colors::*;
+pub use dialogs::*;
 pub use hotkey::*;
 pub use images::*;
 pub use links::*;

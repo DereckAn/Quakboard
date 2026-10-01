@@ -516,3 +516,17 @@ export async function tauriSyncGetDownloadDir(): Promise<string> {
 export async function tauriSyncChooseDownloadDir(): Promise<string | null> {
   return await invoke<string | null>("sync_choose_download_dir");
 }
+
+/**
+ * Shows a folder picker from the backend, which keeps the window from
+ * auto-hiding behind it. Resolves to the chosen folder, or null if closed.
+ */
+export async function tauriChooseFolder(
+  title: string,
+  startIn?: string | null,
+): Promise<string | null> {
+  return await invoke<string | null>("choose_folder", {
+    title,
+    startIn: startIn || null,
+  });
+}
