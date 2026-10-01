@@ -3,7 +3,7 @@
 
 use std::{
     net::{IpAddr, SocketAddr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -13,6 +13,7 @@ use std::{
 
 use serde::Serialize;
 use tokio::{
+    io::AsyncReadExt,
     net::{TcpListener, TcpStream},
     sync::oneshot,
     task::JoinSet,
@@ -21,6 +22,14 @@ use tokio::{
 use super::{
     body::{read_body, write_body, IMAGE_BODY_LIMITS, MAX_IMAGE_BYTES},
     image::{decode_png, open_image, seal_image, ImageDetails, ImageMeta},
+    fetch::{
+        decide, encode_salt, open_fetch_request, seal_fetch_reply, stream_context, FetchReply,
+        RefusalReason, FILE_IDLE_TIMEOUT,
+    },
+    fetching::{fetch_into, FetchError, RemoteFile},
+    offers::{hash_file, open_file_offer, seal_file_offer, FileOfferInfo, Offer},
+    stream::{new_salt, send_stream},
+    remote_files::validate_offer,
     pairing::{self, LocalDevice, PairError},
     store::{Peer, StoreError, SyncStore},
     transport, ClipPayload, Frame, PeerKey, SyncError,
@@ -35,6 +44,10 @@ const IMAGE_ECHO_WINDOW: Duration = Duration::from_secs(5);
 pub type ApplyClip = Arc<dyn Fn(ClipPayload) + Send + Sync>;
 /// Stores a received, verified image and puts it on the system clipboard.
 pub type ApplyImage = Arc<dyn Fn(ReceivedImage) + Send + Sync>;
+/// Records a file another device offered, as a remote item in history.
+pub type ApplyOffer = Arc<dyn Fn(ReceivedOffer) + Send + Sync>;
+/// Finds a file this device offered, by offer id. Blocking (database).
+pub type LookupOffer = Arc<dyn Fn(&str) -> Option<Offer> + Send + Sync>;
 /// Tells the UI what pairing is doing.
 pub type OnPairing = Arc<dyn Fn(PairingEvent) + Send + Sync>;
 /// Looks a device up on the network by id (mDNS), for when its last address fails.
@@ -45,6 +58,8 @@ pub type ResolveAddr = Arc<dyn Fn(&str) -> Option<SocketAddr> + Send + Sync>;
 pub struct SyncHooks {
     pub apply_clip: ApplyClip,
     pub apply_image: ApplyImage,
+    pub apply_offer: ApplyOffer,
+    pub lookup_offer: LookupOffer,
     pub on_pairing: OnPairing,
     pub resolve_addr: ResolveAddr,
 }
@@ -58,6 +73,14 @@ pub struct ReceivedImage {
     /// See `image::pixel_hash`; the echo guard compares it.
     pub pixel_hash: String,
     /// The sender's name as stored at pairing, for "Synced from …".
+    pub from_name: String,
+}
+
+/// A file offer from a paired device, already checked (`validate_offer`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReceivedOffer {
+    pub info: FileOfferInfo,
+    pub from_id: String,
     pub from_name: String,
 }
 
@@ -134,7 +157,7 @@ impl SyncService {
         if is_echo {
             return 0;
         }
-        self.send_to_peers("text", |device_id, key| {
+        self.send_to_peers("text", None, |device_id, key| {
             Ok(Outgoing {
                 frame: Frame::seal_clip(device_id, key, &clip)?,
                 body: None,
@@ -157,7 +180,7 @@ impl SyncService {
             );
             return 0;
         }
-        self.send_to_peers("image", |device_id, key| {
+        self.send_to_peers("image", None, |device_id, key| {
             let (frame, body) = seal_image(device_id, key, details, png)?;
             Ok(Outgoing {
                 frame,
@@ -165,6 +188,47 @@ impl SyncService {
             })
         })
         .await
+    }
+
+    /// Offer a file to the paired devices chosen in the Send picker.
+    /// Returns how many of them were reached.
+    pub async fn send_offer(&self, info: &FileOfferInfo, to: &[String]) -> usize {
+        self.send_to_peers("a file offer", Some(to), |device_id, key| {
+            Ok(Outgoing {
+                frame: seal_file_offer(device_id, key, info)?,
+                body: None,
+            })
+        })
+        .await
+    }
+
+    /// Fetch a file another device offered, into `dest_dir`.
+    pub async fn fetch_file(
+        &self,
+        remote: &RemoteFile,
+        dest_dir: &Path,
+        on_progress: impl FnMut(u64),
+    ) -> Result<PathBuf, FetchError> {
+        let peer = lock(&self.store)
+            .peer(&remote.origin_id)
+            .map(|p| (p.key, p.last_addr.clone()));
+        let Some((key, last_addr)) = peer else {
+            return Err(FetchError::Refused(RefusalReason::NotShared));
+        };
+
+        // Same fallback as clips: the last address, then a network lookup.
+        let looked_up = (self.hooks.resolve_addr)(&remote.origin_id).map(|a| a.to_string());
+        let mut stream = None;
+        for addr in last_addr.iter().chain(looked_up.iter()) {
+            if let Ok(connected) = transport::connect(addr).await {
+                stream = Some(connected);
+                break;
+            }
+        }
+        let mut stream = stream.ok_or_else(|| FetchError::Offline(remote.origin_name.clone()))?;
+
+        let (me, _) = self.identity();
+        fetch_into(&mut stream, &me, &key, remote, dest_dir, on_progress).await
     }
 
     /// Whether an image the monitor just saw on the clipboard is one this
@@ -192,12 +256,19 @@ impl SyncService {
     async fn send_to_peers(
         &self,
         kind: &str,
+        only: Option<&[String]>,
         seal: impl Fn(&str, &PeerKey) -> Result<Outgoing, SyncError>,
     ) -> usize {
         let mut sends = JoinSet::new();
+        let mut chosen = 0;
         {
             let store = lock(&self.store);
-            for peer in &store.peers {
+            let targets = store
+                .peers
+                .iter()
+                .filter(|peer| only.is_none_or(|ids| ids.contains(&peer.id)));
+            for peer in targets {
+                chosen += 1;
                 let outgoing = match seal(&store.device_id, &peer.key) {
                     Ok(outgoing) => outgoing,
                     Err(e) => {
@@ -229,9 +300,8 @@ impl SyncService {
             }
         }
         // Counts only: clip contents can be passwords and never get logged.
-        let paired = lock(&self.store).peers.len();
-        if paired > 0 {
-            println!("Sync sent {kind} to {reached} of {paired} paired device(s)");
+        if chosen > 0 {
+            println!("Sync sent {kind} to {reached} of {chosen} paired device(s)");
         }
         reached
     }
@@ -329,6 +399,8 @@ impl SyncService {
         match frame {
             Frame::Clip { .. } => self.handle_clip(frame, addr),
             Frame::Image { .. } => self.handle_image(frame, &mut stream, addr).await,
+            Frame::FileOffer { .. } => self.handle_offer(frame, addr),
+            Frame::FileFetch { .. } => self.handle_fetch(frame, &mut stream, addr).await,
             Frame::PairRequest { from } => {
                 if !self.accepts_pairing.load(Ordering::SeqCst) {
                     eprintln!("Ignored pairing request from {addr}: Devices screen not open");
@@ -415,6 +487,135 @@ impl SyncService {
             png,
             meta,
             pixel_hash: decoded.pixel_hash,
+            from_name,
+        });
+    }
+
+    /// Serve an offered file, after every check in `fetch::decide`.
+    async fn handle_fetch(&self, frame: Frame, stream: &mut TcpStream, from_addr: SocketAddr) {
+        let Frame::FileFetch { from, .. } = &frame else {
+            return;
+        };
+        let peer = lock(&self.store).peer(from).map(|p| (p.key, p.name.clone()));
+        let Some((key, from_name)) = peer else {
+            eprintln!("Ignored file request from unpaired device at {from_addr}");
+            return;
+        };
+        let request = match open_fetch_request(&frame, &key) {
+            Ok(request) => request,
+            Err(e) => {
+                eprintln!("Dropped file request from {from_name} at {from_addr}: {e}");
+                return;
+            }
+        };
+
+        // Database lookup and a possible re-hash: keep both off the workers.
+        let lookup_offer = self.hooks.lookup_offer.clone();
+        let (offer_id, requester) = (request.offer_id.clone(), from.clone());
+        let decision = tokio::task::spawn_blocking(move || {
+            decide(lookup_offer(&offer_id), &requester, |path| hash_file(path, |_, _| {}))
+        })
+        .await;
+        let decision = match decision {
+            Ok(decision) => decision,
+            Err(e) => {
+                eprintln!("Checking a file request from {from_name} failed to run: {e}");
+                return;
+            }
+        };
+
+        let serving = match decision {
+            Ok(offer) => match new_salt() {
+                Ok(salt) => Some((offer, salt)),
+                Err(e) => {
+                    eprintln!("Could not start serving a file to {from_name}: {e}");
+                    return;
+                }
+            },
+            Err(reason) => {
+                println!("Refused a file request from {from_name}: {reason:?}");
+                let _ = self
+                    .reply_to_fetch(stream, &key, &request.offer_id, &FetchReply::Refused { reason })
+                    .await;
+                None
+            }
+        };
+        let Some((offer, salt)) = serving else {
+            return;
+        };
+
+        let start = FetchReply::Start {
+            salt: encode_salt(&salt),
+            size: offer.stamp.size,
+        };
+        if let Err(e) = self.reply_to_fetch(stream, &key, &offer.offer_id, &start).await {
+            eprintln!("Could not answer {from_name}'s file request: {e}");
+            return;
+        }
+
+        let file = match tokio::fs::File::open(&offer.path).await {
+            Ok(file) => file,
+            Err(e) => {
+                // The requester sees the stream end early and discards it.
+                eprintln!("Could not open a file {from_name} asked for: {e}");
+                return;
+            }
+        };
+        // Never past the offered size: a file still being written would
+        // otherwise stream forever (see `send_stream`).
+        let mut source = file.take(offer.stamp.size);
+        let (my_id, _) = self.identity();
+        let context = stream_context(&offer.offer_id, &my_id);
+        match send_stream(&mut source, stream, &key, &salt, &context, FILE_IDLE_TIMEOUT).await {
+            Ok(sent) if sent.sha256 == offer.sha256 => {
+                println!("Sync served a file ({} KB) to {from_name}", sent.byte_len / 1024);
+            }
+            Ok(_) => eprintln!("A file changed while serving it to {from_name}; they will reject it"),
+            Err(e) => eprintln!("Serving a file to {from_name} failed: {e}"),
+        }
+    }
+
+    async fn reply_to_fetch(
+        &self,
+        stream: &mut TcpStream,
+        key: &PeerKey,
+        offer_id: &str,
+        reply: &FetchReply,
+    ) -> std::io::Result<()> {
+        let frame = seal_fetch_reply(key, offer_id, reply)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        tokio::time::timeout(Duration::from_secs(5), transport::write_frame(stream, &frame))
+            .await
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "reply timed out"))?
+    }
+
+    fn handle_offer(&self, frame: Frame, from_addr: SocketAddr) {
+        let Frame::FileOffer { from, .. } = &frame else {
+            return;
+        };
+        let peer = lock(&self.store).peer(from).map(|p| (p.key, p.name.clone()));
+        let Some((key, from_name)) = peer else {
+            eprintln!("Dropped file offer from unpaired device at {from_addr}");
+            return;
+        };
+
+        let info = open_file_offer(&frame, &key)
+            .map_err(|e| e.to_string())
+            .and_then(validate_offer);
+        let info = match info {
+            Ok(info) => info,
+            Err(e) => {
+                eprintln!("Dropped file offer from {from_name} at {from_addr}: {e}");
+                return;
+            }
+        };
+
+        self.learn_ip(from, from_addr.ip());
+        // The size only: file names can be private.
+        println!("Sync received a file offer ({} KB) from {from_name}", info.size / 1024);
+        (self.hooks.apply_offer)(ReceivedOffer {
+            info,
+            from_id: from.clone(),
             from_name,
         });
     }
@@ -573,6 +774,9 @@ mod tests {
         service: Arc<SyncService>,
         received: mpsc::UnboundedReceiver<ClipPayload>,
         images: mpsc::UnboundedReceiver<ReceivedImage>,
+        offers: mpsc::UnboundedReceiver<ReceivedOffer>,
+        /// Stands in for the offers table: what this device has shared.
+        shared_files: Arc<Mutex<HashMap<String, Offer>>>,
         events: mpsc::UnboundedReceiver<PairingEvent>,
         addr: SocketAddr,
         store_path: PathBuf,
@@ -605,6 +809,9 @@ mod tests {
         let (clip_tx, received) = mpsc::unbounded_channel();
         let (event_tx, events) = mpsc::unbounded_channel();
         let (image_tx, images) = mpsc::unbounded_channel();
+        let (offer_tx, offers) = mpsc::unbounded_channel();
+        let shared_files = Arc::new(Mutex::new(HashMap::new()));
+        let shared_lookup = Arc::clone(&shared_files);
         let store = SyncStore {
             device_id: id.into(),
             device_name: format!("{id} name"),
@@ -619,6 +826,10 @@ mod tests {
             apply_image: Arc::new(move |image| {
                 let _ = image_tx.send(image);
             }),
+            apply_offer: Arc::new(move |offer| {
+                let _ = offer_tx.send(offer);
+            }),
+            lookup_offer: Arc::new(move |id| lock(&shared_lookup).get(id).cloned()),
             on_pairing: Arc::new(move |event| {
                 let _ = event_tx.send(event);
             }),
@@ -632,6 +843,8 @@ mod tests {
             service,
             received,
             images,
+            offers,
+            shared_files,
             events,
             addr,
             store_path,
@@ -1036,6 +1249,329 @@ mod tests {
         assert_eq!(next_clip(&mut b).await, Some(clip("text only")));
     }
 
+    fn offer_info() -> FileOfferInfo {
+        FileOfferInfo {
+            offer_id: "33333333-3333-4333-8333-333333333333".into(),
+            name: "report.pdf".into(),
+            size: 2048,
+            mime: "application/pdf".into(),
+            sha256: "a".repeat(64),
+        }
+    }
+
+    async fn send_offer(to: SocketAddr, from: &str, info: &FileOfferInfo) {
+        let frame = crate::sync::offers::seal_file_offer(from, &KEY, info).unwrap();
+        transport::send_frame(&to.to_string(), &frame).await.unwrap();
+    }
+
+    async fn next_offer(device: &mut Device) -> Option<ReceivedOffer> {
+        tokio::time::timeout(Duration::from_millis(500), device.offers.recv())
+            .await
+            .ok()
+            .flatten()
+    }
+
+    #[tokio::test]
+    async fn offer_from_a_paired_device_is_applied() {
+        let (_a, mut b) = paired_devices().await;
+        send_offer(b.addr, "a", &offer_info()).await;
+
+        assert_eq!(
+            next_offer(&mut b).await,
+            Some(ReceivedOffer {
+                info: offer_info(),
+                from_id: "a".into(),
+                from_name: "a".into(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn offered_file_name_is_cleaned_on_arrival() {
+        let (_a, mut b) = paired_devices().await;
+        let sneaky = FileOfferInfo {
+            name: "../../.bashrc".into(),
+            ..offer_info()
+        };
+        send_offer(b.addr, "a", &sneaky).await;
+
+        assert_eq!(next_offer(&mut b).await.unwrap().info.name, ".bashrc");
+    }
+
+    #[tokio::test]
+    async fn offer_from_an_unpaired_device_is_dropped() {
+        let (_a, mut b) = paired_devices().await;
+        send_offer(b.addr, "stranger", &offer_info()).await;
+
+        assert_eq!(next_offer(&mut b).await, None);
+    }
+
+    #[tokio::test]
+    async fn invalid_offer_is_dropped() {
+        let (_a, mut b) = paired_devices().await;
+        let bad = FileOfferInfo {
+            sha256: "not-a-hash".into(),
+            ..offer_info()
+        };
+        send_offer(b.addr, "a", &bad).await;
+
+        assert_eq!(next_offer(&mut b).await, None);
+    }
+
+    const SHARED_OFFER: &str = "55555555-5555-4555-8555-555555555555";
+
+    /// Share `content` from `owner` with `offered_to`, the way Send will.
+    fn share(owner: &Device, content: &[u8], offered_to: &[&str]) -> PathBuf {
+        let path = owner._dir.path().join("shared.bin");
+        std::fs::write(&path, content).unwrap();
+        let hashed = hash_file(&path, |_, _| {}).unwrap();
+        let offer = Offer {
+            offer_id: SHARED_OFFER.into(),
+            item_id: "item".into(),
+            path: path.clone(),
+            stamp: hashed.stamp,
+            sha256: hashed.sha256,
+            offered_to: offered_to.iter().map(|id| id.to_string()).collect(),
+            created_at: String::new(),
+        };
+        lock(&owner.shared_files).insert(SHARED_OFFER.into(), offer);
+        path
+    }
+
+    /// Fetch `offer_id` from `owner` as device `as_id`: the file, or why not.
+    async fn fetch(
+        owner: &Device,
+        as_id: &str,
+        offer_id: &str,
+    ) -> Result<Vec<u8>, Option<crate::sync::fetch::RefusalReason>> {
+        use crate::sync::fetch::{decode_salt, open_fetch_reply, seal_fetch_request};
+
+        let mut stream = transport::connect(&owner.addr.to_string()).await.unwrap();
+        let request = seal_fetch_request(as_id, &KEY, offer_id).unwrap();
+        transport::write_frame(&mut stream, &request).await.unwrap();
+        // No answer at all (connection closed) is `Err(None)`.
+        let reply = transport::read_frame(&mut stream).await.map_err(|_| None)?;
+        let (salt, size) = match open_fetch_reply(&reply, &KEY, offer_id).unwrap() {
+            FetchReply::Start { salt, size } => (decode_salt(&salt).unwrap(), size),
+            FetchReply::Refused { reason } => return Err(Some(reason)),
+        };
+
+        let mut file = Vec::new();
+        let context = stream_context(offer_id, &owner.service.identity().0);
+        crate::sync::stream::receive_stream(
+            &mut stream,
+            &mut file,
+            &KEY,
+            &salt,
+            &context,
+            size,
+            FILE_IDLE_TIMEOUT,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        Ok(file)
+    }
+
+    #[tokio::test]
+    async fn offered_file_is_served_to_its_device() {
+        let (a, _b) = paired_devices().await;
+        share(&a, b"the quarterly report", &["b"]);
+
+        assert_eq!(fetch(&a, "b", SHARED_OFFER).await, Ok(b"the quarterly report".to_vec()));
+    }
+
+    #[tokio::test]
+    async fn multi_chunk_file_is_served_intact() {
+        let (a, _b) = paired_devices().await;
+        let content: Vec<u8> = (0..700 * 1024).map(|i| (i % 251) as u8).collect();
+        share(&a, &content, &["b"]);
+
+        assert_eq!(fetch(&a, "b", SHARED_OFFER).await, Ok(content));
+    }
+
+    #[tokio::test]
+    async fn file_not_offered_to_the_requester_is_refused() {
+        let listener_a = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr_b = TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
+        let addr_c = TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
+        let a = device("a", listener_a, vec![peer("b", addr_b), peer("c", addr_c)]).await;
+        share(&a, b"only for b", &["b"]);
+
+        assert_eq!(
+            fetch(&a, "c", SHARED_OFFER).await,
+            Err(Some(crate::sync::fetch::RefusalReason::NotShared))
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_offer_is_refused() {
+        let (a, _b) = paired_devices().await;
+        assert_eq!(
+            fetch(&a, "b", SHARED_OFFER).await,
+            Err(Some(crate::sync::fetch::RefusalReason::NotShared))
+        );
+    }
+
+    #[tokio::test]
+    async fn deleted_file_is_refused_as_missing() {
+        let (a, _b) = paired_devices().await;
+        let path = share(&a, b"soon gone", &["b"]);
+        std::fs::remove_file(path).unwrap();
+
+        assert_eq!(
+            fetch(&a, "b", SHARED_OFFER).await,
+            Err(Some(crate::sync::fetch::RefusalReason::Missing))
+        );
+    }
+
+    #[tokio::test]
+    async fn edited_file_is_refused_as_changed() {
+        let (a, _b) = paired_devices().await;
+        let path = share(&a, b"first draft", &["b"]);
+        std::fs::write(path, b"second draft, longer").unwrap();
+
+        assert_eq!(
+            fetch(&a, "b", SHARED_OFFER).await,
+            Err(Some(crate::sync::fetch::RefusalReason::Changed))
+        );
+    }
+
+    #[tokio::test]
+    async fn unpaired_device_gets_no_answer() {
+        let (a, _b) = paired_devices().await;
+        share(&a, b"private", &["stranger"]);
+
+        assert_eq!(fetch(&a, "stranger", SHARED_OFFER).await, Err(None));
+    }
+
+    #[tokio::test]
+    async fn serving_a_file_never_modifies_it() {
+        let (a, _b) = paired_devices().await;
+        let path = share(&a, b"leave me alone", &["b"]);
+        fetch(&a, "b", SHARED_OFFER).await.unwrap();
+
+        assert_eq!(std::fs::read(path).unwrap(), b"leave me alone");
+    }
+
+    fn remote_for(owner: &Device, content: &[u8]) -> RemoteFile {
+        RemoteFile {
+            offer_id: SHARED_OFFER.into(),
+            origin_id: owner.service.identity().0,
+            origin_name: "a".into(),
+            name: "report.pdf".into(),
+            size: content.len() as u64,
+            sha256: hash_file(&owner._dir.path().join("shared.bin"), |_, _| {}).unwrap().sha256,
+        }
+    }
+
+    #[tokio::test]
+    async fn fetched_file_lands_in_the_download_folder() {
+        let (a, b) = paired_devices().await;
+        share(&a, b"the quarterly report", &["b"]);
+        let downloads = tempfile::tempdir().unwrap();
+        let placed = b
+            .service
+            .fetch_file(&remote_for(&a, b"the quarterly report"), downloads.path(), |_| {})
+            .await
+            .unwrap();
+
+        assert_eq!(
+            (placed.clone(), std::fs::read(&placed).unwrap()),
+            (downloads.path().join("report.pdf"), b"the quarterly report".to_vec())
+        );
+    }
+
+    #[tokio::test]
+    async fn fetching_leaves_no_partial_file() {
+        let (a, b) = paired_devices().await;
+        share(&a, b"the quarterly report", &["b"]);
+        let downloads = tempfile::tempdir().unwrap();
+        b.service
+            .fetch_file(&remote_for(&a, b"the quarterly report"), downloads.path(), |_| {})
+            .await
+            .unwrap();
+        let leftovers = std::fs::read_dir(downloads.path().join(".partial")).unwrap().count();
+
+        assert_eq!(leftovers, 0);
+    }
+
+    #[tokio::test]
+    async fn file_that_doesnt_match_its_offer_is_discarded() {
+        let (a, b) = paired_devices().await;
+        share(&a, b"the quarterly report", &["b"]);
+        let downloads = tempfile::tempdir().unwrap();
+        let lie = RemoteFile {
+            sha256: "f".repeat(64),
+            ..remote_for(&a, b"the quarterly report")
+        };
+        let result = b.service.fetch_file(&lie, downloads.path(), |_| {}).await;
+        let in_folder = std::fs::read_dir(downloads.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name() != ".partial")
+            .count();
+        let partials = std::fs::read_dir(downloads.path().join(".partial")).unwrap().count();
+
+        assert_eq!((result.is_err(), in_folder, partials), (true, 0, 0));
+    }
+
+    #[tokio::test]
+    async fn fetching_a_refused_file_reports_why() {
+        let (a, b) = paired_devices().await;
+        let path = share(&a, b"soon gone", &["b"]);
+        let remote = remote_for(&a, b"soon gone");
+        std::fs::remove_file(path).unwrap();
+        let downloads = tempfile::tempdir().unwrap();
+
+        assert!(matches!(
+            b.service.fetch_file(&remote, downloads.path(), |_| {}).await,
+            Err(FetchError::Refused(RefusalReason::Missing))
+        ));
+    }
+
+    #[tokio::test]
+    async fn fetching_from_an_offline_device_says_so() {
+        let listener_b = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gone = dead_addr().await;
+        let b = device("b", listener_b, vec![peer("a", gone)]).await;
+        let remote = RemoteFile {
+            offer_id: SHARED_OFFER.into(),
+            origin_id: "a".into(),
+            origin_name: "a".into(),
+            name: "x".into(),
+            size: 1,
+            sha256: "a".repeat(64),
+        };
+        let downloads = tempfile::tempdir().unwrap();
+
+        assert!(matches!(
+            b.service.fetch_file(&remote, downloads.path(), |_| {}).await,
+            Err(FetchError::Offline(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn offer_goes_only_to_the_chosen_devices() {
+        let listener_a = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener_b = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener_c = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (addr_a, addr_b, addr_c) = (
+            listener_a.local_addr().unwrap(),
+            listener_b.local_addr().unwrap(),
+            listener_c.local_addr().unwrap(),
+        );
+        let a = device("a", listener_a, vec![peer("b", addr_b), peer("c", addr_c)]).await;
+        let mut b = device("b", listener_b, vec![peer("a", addr_a)]).await;
+        let mut c = device("c", listener_c, vec![peer("a", addr_a)]).await;
+        a.service.send_offer(&offer_info(), &["b".to_string()]).await;
+
+        assert_eq!(
+            (next_offer(&mut b).await.is_some(), next_offer(&mut c).await.is_some()),
+            (true, false)
+        );
+    }
+
     #[tokio::test]
     async fn newly_paired_devices_can_sync() {
         let a = unpaired_device(A_ID).await;
@@ -1143,6 +1679,8 @@ mod tests {
         let hooks = SyncHooks {
             apply_clip: Arc::new(|_| {}),
             apply_image: Arc::new(|_| {}),
+            apply_offer: Arc::new(|_| {}),
+            lookup_offer: Arc::new(|_| None),
             on_pairing: Arc::new(|_| {}),
             resolve_addr: Arc::new(|_| None),
         };

@@ -14,12 +14,16 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub mod body;
 pub mod discovery;
+pub mod fetch;
+pub mod fetching;
 pub mod image;
 pub mod offers;
 pub mod pairing;
 pub mod received;
+pub mod remote_files;
 pub mod runtime;
 pub mod service;
+pub mod sharing;
 pub mod store;
 pub mod stream;
 pub mod transport;
@@ -56,6 +60,10 @@ pub enum Frame {
     Image { from: String, meta: Sealed },
     /// A file the sender lets this device fetch; see `offers`.
     FileOffer { from: String, offer: Sealed },
+    /// Asks the owner for an offered file; see `fetch`.
+    FileFetch { from: String, request: Sealed },
+    /// The owner's answer; a `stream` follows when it says Start.
+    FileReply { reply: Sealed },
 }
 
 #[derive(Debug, PartialEq)]

@@ -4,9 +4,6 @@
 //! An offer is the only thing a fetch can name: requests carry an offer id,
 //! never a path, so a paired device can only ever read files the user chose
 //! to send, and only if it was among the devices they were sent to.
-// NOTE: file sharing is built in steps (docs/FILE_SYNC_PLAN.md); offers are
-// first created in step 6. Drop this allow then.
-#![allow(dead_code)]
 
 use std::{
     fs::File,
@@ -183,12 +180,6 @@ pub fn find_offer(conn: &Connection, offer_id: &str) -> rusqlite::Result<Option<
         },
     )
     .optional()
-}
-
-/// "Stop sharing". Returns whether the offer existed.
-pub fn remove_offer(conn: &Connection, offer_id: &str) -> rusqlite::Result<bool> {
-    let removed = conn.execute("DELETE FROM sync_offers WHERE offer_id = ?1", [offer_id])?;
-    Ok(removed > 0)
 }
 
 /// What a `FileOffer` tells the receiving device. Sealed, so names and sizes
@@ -376,22 +367,6 @@ mod tests {
         assert!(find_offer(&repo.conn, &survivor.offer_id)
             .unwrap()
             .is_some());
-    }
-
-    #[test]
-    fn stopping_sharing_removes_the_offer() {
-        let fx = fixture();
-        let repo = repo(&fx);
-        let created = offer(&fx, &repo, &file_item(&repo));
-        remove_offer(&repo.conn, &created.offer_id).unwrap();
-
-        assert_eq!(find_offer(&repo.conn, &created.offer_id).unwrap(), None);
-    }
-
-    #[test]
-    fn stopping_an_unknown_offer_reports_false() {
-        let fx = fixture();
-        assert!(!remove_offer(&repo(&fx).conn, "no-such-offer").unwrap());
     }
 
     #[test]

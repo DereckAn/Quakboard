@@ -479,6 +479,11 @@ pub fn run() {
             commands::sync_pair_submit_code,
             commands::sync_pair_cancel,
             commands::sync_unpair,
+            commands::sync_send_file,
+            commands::sync_fetch_file,
+            commands::sync_cancel_fetch,
+            commands::sync_get_download_dir,
+            commands::sync_set_download_dir,
             commands::update_screenshot_hotkeys,
             commands::unregister_screenshot_hotkeys,
         ])

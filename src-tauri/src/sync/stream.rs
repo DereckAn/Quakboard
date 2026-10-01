@@ -9,9 +9,6 @@
 //!
 //! On the wire each chunk is a `body.rs` body: a flag byte (1 = last), then
 //! the ciphertext. Nothing is held in memory beyond one chunk.
-// NOTE: file sharing is built in steps (docs/FILE_SYNC_PLAN.md); nothing sends
-// or receives streams until step 4. Drop this allow then.
-#![allow(dead_code)]
 
 use std::{io, time::Duration};
 
@@ -108,6 +105,8 @@ where
 /// Receive and decrypt a stream into `sink`. Fails without writing past
 /// `max_len` (the size the sender promised), and fails on any chunk that is
 /// tampered, out of order, missing, or from another transfer.
+/// `on_progress` gets the bytes received so far after each chunk.
+#[allow(clippy::too_many_arguments)]
 pub async fn receive_stream<R, W>(
     source: &mut R,
     sink: &mut W,
@@ -116,6 +115,7 @@ pub async fn receive_stream<R, W>(
     context: &str,
     max_len: u64,
     idle: Duration,
+    mut on_progress: impl FnMut(u64),
 ) -> io::Result<StreamSummary>
 where
     R: AsyncRead + Unpin,
@@ -154,6 +154,7 @@ where
         }
         hasher.update(&plaintext);
         sink.write_all(&plaintext).await?;
+        on_progress(byte_len);
 
         if is_last {
             break;
@@ -246,7 +247,7 @@ mod tests {
     async fn receive(wire: &[u8], max_len: u64) -> io::Result<(Vec<u8>, StreamSummary)> {
         let mut out = Vec::new();
         let summary =
-            receive_stream(&mut Cursor::new(wire), &mut out, &KEY, &SALT, CONTEXT, max_len, IDLE)
+            receive_stream(&mut Cursor::new(wire), &mut out, &KEY, &SALT, CONTEXT, max_len, IDLE, |_| {})
                 .await?;
         Ok((out, summary))
     }
@@ -393,8 +394,7 @@ mod tests {
             &SALT,
             "offer-2:device-a",
             u64::MAX,
-            IDLE,
-        )
+            IDLE, |_| {})
         .await
         .unwrap_err();
 
@@ -412,8 +412,7 @@ mod tests {
             &[9; SALT_BYTES],
             CONTEXT,
             u64::MAX,
-            IDLE,
-        )
+            IDLE, |_| {})
         .await
         .unwrap_err();
 
@@ -438,8 +437,7 @@ mod tests {
             &SALT,
             CONTEXT,
             CHUNK_BYTES as u64,
-            IDLE,
-        )
+            IDLE, |_| {})
         .await;
 
         assert!(out.len() as u64 <= CHUNK_BYTES as u64);
@@ -454,10 +452,27 @@ mod tests {
         // `client` stays open but sends nothing more.
 
         let mut out = Vec::new();
-        let err = receive_stream(&mut server, &mut out, &KEY, &SALT, CONTEXT, u64::MAX, IDLE)
+        let err = receive_stream(&mut server, &mut out, &KEY, &SALT, CONTEXT, u64::MAX, IDLE, |_| {})
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn progress_is_reported_up_to_the_whole_file() {
+        let wire = wire_for(&file_of(MULTI_CHUNK)).await;
+        let mut seen = Vec::new();
+        let mut out = Vec::new();
+        receive_stream(&mut Cursor::new(&wire), &mut out, &KEY, &SALT, CONTEXT, u64::MAX, IDLE, |done| {
+            seen.push(done)
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            seen,
+            vec![CHUNK_BYTES as u64, 2 * CHUNK_BYTES as u64, MULTI_CHUNK as u64]
+        );
     }
 
     #[tokio::test]

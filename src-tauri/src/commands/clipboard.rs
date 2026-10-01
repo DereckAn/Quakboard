@@ -192,15 +192,7 @@ pub fn write_image_to_clipboard(image_path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn write_file_to_clipboard(path: String) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        crate::clipboard::file_handler::write_file_to_clipboard(&path)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = path;
-        Err("File clipboard operations are only supported on macOS.".to_string())
-    }
+    crate::clipboard::operations::write_file_list(std::path::Path::new(&path))
 }
 
 /// Terminals paste with Ctrl+Shift+V; plain Ctrl+V reaches the shell as `^V`.

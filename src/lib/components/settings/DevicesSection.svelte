@@ -3,6 +3,7 @@
   import Button from "$lib/components/ui/Button.svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
   import {
+    tauriSyncGetDownloadDir,
     tauriSyncGetStatus,
     tauriSyncListNearby,
     tauriSyncListPeers,
@@ -11,6 +12,7 @@
     tauriSyncPairStart,
     tauriSyncPairSubmitCode,
     tauriSyncSetAcceptingPairing,
+    tauriSyncSetDownloadDir,
     tauriSyncSetEnabled,
     tauriSyncSetImagesEnabled,
     tauriSyncUnpair,
@@ -22,6 +24,7 @@
     SyncStatus,
   } from "$lib/types";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { open } from "@tauri-apps/plugin-dialog";
   import { onDestroy, onMount } from "svelte";
 
   const REFRESH_INTERVAL_MS = 2000;
@@ -31,6 +34,7 @@
   let nearby = $state<NearbyDevice[]>([]);
   let isToggling = $state(false);
   let isTogglingImages = $state(false);
+  let downloadDir = $state<string | null>(null);
   let errorMessage = $state<string | null>(null);
   let notice = $state<string | null>(null);
   let confirmingUnpairId = $state<string | null>(null);
@@ -113,6 +117,23 @@
       errorMessage = describe(err);
     } finally {
       isTogglingImages = false;
+    }
+  }
+
+  async function handleChangeDownloadDir() {
+    errorMessage = null;
+    try {
+      const picked = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: downloadDir ?? undefined,
+        title: "Where should fetched files go?",
+      });
+      if (typeof picked === "string") {
+        downloadDir = await tauriSyncSetDownloadDir(picked);
+      }
+    } catch (err) {
+      errorMessage = describe(err);
     }
   }
 
@@ -211,6 +232,7 @@
 
     await refresh();
     await acceptPairingWhileOpen();
+    downloadDir = await tauriSyncGetDownloadDir().catch(() => null);
     refreshTimer = setInterval(refresh, REFRESH_INTERVAL_MS);
   });
 
@@ -292,6 +314,18 @@
           }`}
         ></span>
       </button>
+    </div>
+
+    <div class="flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <p class="text-sm font-medium text-text">Fetched files go to</p>
+        <p class="text-xs text-text-muted break-all">
+          {downloadDir ?? "…"}
+        </p>
+      </div>
+      <Button variant="outline" size="sm" onclick={handleChangeDownloadDir}>
+        Change…
+      </Button>
     </div>
 
     <div class="space-y-2">

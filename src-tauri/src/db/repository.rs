@@ -382,6 +382,14 @@ impl ClipboardRepository {
         Ok(())
     }
 
+    pub fn update_metadata(&self, id: &str, metadata_json: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE clipboard_items SET content_metadata = ?1 WHERE id = ?2",
+            rusqlite::params![metadata_json, id],
+        )?;
+        Ok(())
+    }
+
     /// Find existing item by file_hash to avoid duplicate files
     pub fn find_by_file_hash(&self, file_hash: &str) -> Result<Option<ClipboardItem>> {
         let mut stmt = self.conn.prepare(

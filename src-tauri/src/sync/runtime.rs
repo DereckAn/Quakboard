@@ -2,18 +2,24 @@
 //! at startup; the service inside exists only while sync is enabled.
 
 use std::{
+    collections::HashMap,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
 use tauri::{async_runtime::JoinHandle, AppHandle, Emitter, Manager};
-use tokio::{net::TcpListener, sync::oneshot};
+use tokio::{
+    net::TcpListener,
+    sync::{oneshot, Semaphore},
+};
 
 use super::{
     discovery::{DiscoveredDevice, Discovery},
+    offers::find_offer,
     received::store_received_image,
-    service::{ReceivedImage, SyncHooks, SyncService},
+    remote_files::store_file_offer,
+    service::{ReceivedImage, ReceivedOffer, SyncHooks, SyncService},
     store::{SyncStore, STORE_FILE_NAME},
     transport::SYNC_PORT,
     ClipPayload,
@@ -25,12 +31,18 @@ use crate::{
 
 pub const SETTING_KEY: &str = "syncEnabled";
 pub const IMAGES_SETTING_KEY: &str = "syncImages";
+pub const DOWNLOAD_DIR_SETTING_KEY: &str = "syncDownloadDir";
+const MAX_CONCURRENT_FETCHES: usize = 3;
 
 pub struct SyncRuntime {
     app_data_dir: PathBuf,
     running: Mutex<Option<Running>>,
     /// Delivers the code the user types, for a pairing this device started.
     pending_code: Mutex<Option<oneshot::Sender<String>>>,
+    /// File fetches in progress, by history item id, so they can be cancelled.
+    pub(super) fetches: Mutex<HashMap<String, JoinHandle<()>>>,
+    /// At most this many fetches download at once; the rest wait their turn.
+    pub(super) fetch_slots: Arc<Semaphore>,
 }
 
 struct Running {
@@ -54,7 +66,17 @@ impl SyncRuntime {
             app_data_dir: app_data_dir.to_path_buf(),
             running: Mutex::new(None),
             pending_code: Mutex::new(None),
+            fetches: Mutex::new(HashMap::new()),
+            fetch_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_FETCHES)),
         }
+    }
+
+    /// A text setting, if set and not blank.
+    pub(super) fn setting_text(&self, key: &str) -> Option<String> {
+        let contents = std::fs::read_to_string(self.app_data_dir.join("settings.json")).ok()?;
+        let settings: serde_json::Value = serde_json::from_str(&contents).ok()?;
+        let value = settings.get(key)?.as_str()?.trim();
+        (!value.is_empty()).then(|| value.to_string())
     }
 
     /// Whether the user turned sync on. Off unless set.
@@ -212,6 +234,8 @@ pub fn local_addresses() -> Vec<String> {
 fn hooks(app: &AppHandle, discovery: Option<Arc<Discovery>>) -> SyncHooks {
     let event_app = app.clone();
     let image_app = app.clone();
+    let offer_app = app.clone();
+    let lookup_app = app.clone();
     SyncHooks {
         apply_clip: Arc::new(|clip: ClipPayload| {
             // Writing spawns wl-copy / talks to the OS clipboard; keep it off
@@ -227,6 +251,23 @@ fn hooks(app: &AppHandle, discovery: Option<Arc<Discovery>>) -> SyncHooks {
             // File and database work; keep it off the async workers.
             tauri::async_runtime::spawn_blocking(move || apply_received_image(&app, image));
         }),
+        apply_offer: Arc::new(move |offer: ReceivedOffer| {
+            let app = offer_app.clone();
+            // Database work; keep it off the async workers.
+            tauri::async_runtime::spawn_blocking(move || apply_received_offer(&app, offer));
+        }),
+        lookup_offer: Arc::new(move |offer_id| {
+            let db_path = {
+                let state = lookup_app.state::<Mutex<AppState>>();
+                let state = lock(&state);
+                state.db_path.clone()
+            };
+            let repo = ClipboardRepository::new(&db_path).ok()?;
+            find_offer(&repo.conn, offer_id)
+                .map_err(|e| eprintln!("Failed to look up a file offer: {e}"))
+                .ok()
+                .flatten()
+        }),
         on_pairing: Arc::new(move |event| {
             if let Err(e) = event_app.emit("sync-pairing", event) {
                 eprintln!("Failed to emit sync-pairing event: {e}");
@@ -235,6 +276,26 @@ fn hooks(app: &AppHandle, discovery: Option<Arc<Discovery>>) -> SyncHooks {
         resolve_addr: Arc::new(move |device_id| {
             discovery.as_ref().and_then(|d| d.address_of(device_id))
         }),
+    }
+}
+
+/// Record a file another device offered as a remote item, and show it.
+fn apply_received_offer(app: &AppHandle, offer: ReceivedOffer) {
+    let db_path = {
+        let state = app.state::<Mutex<AppState>>();
+        let state = lock(&state);
+        state.db_path.clone()
+    };
+    let stored = ClipboardRepository::new(&db_path)
+        .map_err(|e| format!("Failed to open history: {e}"))
+        .and_then(|repo| store_file_offer(&repo, &offer.info, &offer.from_id, &offer.from_name));
+    match stored {
+        Ok((item, _)) => {
+            if let Err(e) = app.emit("clipboard-item-added", &item) {
+                eprintln!("Failed to emit clipboard-item-added event: {e}");
+            }
+        }
+        Err(e) => eprintln!("Failed to record file offer from {}: {e}", offer.from_name),
     }
 }
 
@@ -323,6 +384,18 @@ mod tests {
     fn a_malformed_image_setting_falls_back_to_on() {
         let (_dir, runtime) = runtime_with_settings(r#"{"syncImages":42}"#);
         assert!(runtime.syncs_images());
+    }
+
+    #[test]
+    fn text_setting_is_read() {
+        let (_dir, runtime) = runtime_with_settings(r#"{"syncDownloadDir":"/data/in"}"#);
+        assert_eq!(runtime.setting_text(DOWNLOAD_DIR_SETTING_KEY), Some("/data/in".into()));
+    }
+
+    #[test]
+    fn blank_text_setting_counts_as_unset() {
+        let (_dir, runtime) = runtime_with_settings(r#"{"syncDownloadDir":"  "}"#);
+        assert_eq!(runtime.setting_text(DOWNLOAD_DIR_SETTING_KEY), None);
     }
 
     #[test]

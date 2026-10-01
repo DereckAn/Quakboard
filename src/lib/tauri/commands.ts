@@ -4,6 +4,7 @@ import type {
   LabFeatureId,
   LabFeatureWithMeta,
   NearbyDevice,
+  SendFileResult,
   SyncPeer,
   SyncStatus,
   UpdateClipboardItemDto,
@@ -489,4 +490,28 @@ export async function tauriSyncPairCancel(): Promise<void> {
 
 export async function tauriSyncUnpair(peerId: string): Promise<void> {
   await invoke("sync_unpair", { peerId });
+}
+
+// File sharing
+export async function tauriSyncSendFile(
+  itemId: string,
+  deviceIds: string[],
+): Promise<SendFileResult> {
+  return await invoke<SendFileResult>("sync_send_file", { itemId, deviceIds });
+}
+
+export async function tauriSyncFetchFile(itemId: string): Promise<void> {
+  await invoke("sync_fetch_file", { itemId });
+}
+
+export async function tauriSyncCancelFetch(itemId: string): Promise<void> {
+  await invoke("sync_cancel_fetch", { itemId });
+}
+
+export async function tauriSyncGetDownloadDir(): Promise<string> {
+  return await invoke<string>("sync_get_download_dir");
+}
+
+export async function tauriSyncSetDownloadDir(path: string): Promise<string> {
+  return await invoke<string>("sync_set_download_dir", { path });
 }

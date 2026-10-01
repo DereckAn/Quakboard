@@ -1,6 +1,6 @@
 # Plan: file sharing (v1.5.2)
 
-**Status:** planned. Builds on LAN sync v1 ([LAN_SYNC_PLAN.md](LAN_SYNC_PLAN.md)) and the binary bodies from image sync ([IMAGE_SYNC_PLAN.md](IMAGE_SYNC_PLAN.md)).
+**Status:** steps 1–7 implemented (backend 302 tests, plus `RemoteFilePanel` component tests). Step 8 (manual test on real machines) is next. Builds on LAN sync v1 ([LAN_SYNC_PLAN.md](LAN_SYNC_PLAN.md)) and the binary bodies from image sync ([IMAGE_SYNC_PLAN.md](IMAGE_SYNC_PLAN.md)).
 
 ## Goal
 Files are **not** synced automatically; you choose which ones to share.
@@ -89,6 +89,45 @@ For everything in this plan:
 6. **UI:** Send, Fetch, progress, Unavailable, and the sidebar label, with frontend tests for the button states.
 7. **Cross-platform file clipboard,** or hiding the button on Linux and Windows.
 8. **Manual test:** a 1 KB file, a 500 MB file, and 2+ GB with the warning; fetching while the owner goes offline; changing the file after sending; three devices.
+
+## Notes from building
+- **Step 1:** `send_stream` reads its source to the end, so step 4 must pass the file limited to the offered size (`File::take`). Otherwise a file still being written streams forever. `hash_file` already does this: a growing file once made a test hash for 10 minutes and write 6.8 GB.
+- **Step 3: "already on this device" only works by full SHA-256.** It matches the same file offered again, files fetched before (step 5 must store the full SHA-256 as `file_hash`), and clipboard images. A file copied here from the file manager stores a *sampled* fingerprint (`fingerprint_external_file`), so it isn't recognized and shows a Fetch button anyway. A fix would hash local file items of the same size when an offer arrives; that can be expensive, so it's deferred.
+- **Step 3:** remote items have **no `file_url`** until fetched. That keeps them out of `cleanup_missing_file_records` (it only looks at items that have one), and a test pins this down.
+- **Existing behavior:** the "Remove duplicates" action groups items by `content_text`, so two different remote files with the same name are merged into one history entry. Only history entries are affected, never files.
+
+## What was built (steps 1–7)
+| Module | Role |
+|---|---|
+| `sync/stream.rs` | Chunked encrypted transfer (STREAM construction). It uses a key per transfer from a random salt, the chunk number as nonce, and an authenticated "last" flag plus context; it reports progress |
+| `sync/offers.rs` | The `sync_offers` table (revoked by a trigger whenever the item is deleted, on every path), `hash_file` (full SHA-256 that stops at the starting size and fails if the file changes), and `FileOffer` sealing |
+| `sync/remote_files.rs` | `validate_offer`, `clean_file_name`, and `store_file_offer` (new / refreshed / already here) |
+| `sync/fetch.rs` | `FileFetch` / `FileReply` and the owner's `decide`: paired, offered to this device, still there, unchanged (re-hashed when only touched) |
+| `sync/fetching.rs` | The requester side: download into `.partial`, which deletes itself on failure, cancel or abort; verify size and SHA-256; then `place_without_overwrite` (hard link, so taking a name is atomic; ` (1)`, ` (2)`…; never outside the folder) |
+| `sync/sharing.rs` | App glue: Send (hash with progress, then offer the chosen devices), Fetch (at most 3 at once, cancellable), finishing a fetch (the item becomes a local file and the file goes on the clipboard), and the download folder |
+| `clipboard/operations.rs` | `write_file_list` on every platform: `wl-copy text/uri-list` on Wayland, NSPasteboard on macOS, arboard `file_list` on X11 and Windows. It asks the monitor to skip its own write. "Copy file to clipboard" now works on Linux and Windows too |
+| UI | Send button and device picker (online/offline, hashing progress, "Sent to N of M"); `RemoteFilePanel` (Fetch, progress bar, Cancel, reasons, Try again); "on Laptop" in the sidebar; "Fetched files go to … Change…" in Devices |
+
+**Commands:** `sync_send_file`, `sync_fetch_file`, `sync_cancel_fetch`, `sync_get_download_dir`, `sync_set_download_dir`. `sync_list_peers` gains `isOnline`.
+
+**Events:** `sync-file-progress { itemId, phase: hashing|fetching, done, total }` and `sync-file-done { itemId, ok, cancelled, error }`.
+
+**Not built (yet):**
+- **"Stop sharing":** an offer lives until its item is deleted (decision 1); the unused function was removed.
+- **Free disk space check** before fetching: a full disk fails the write, and the partial file is deleted.
+- **The 1 GB confirmation** before fetching.
+- **"Already on this device" for files copied here from the file manager** (see Notes).
+
+## Step 8: manual test (two machines)
+1. **Send** a small file to the Mac: the picker shows the Mac as Online, and you get "Sent to 1 device". The Mac shows the item "· on cachyos-…" with a Fetch button.
+2. **Fetch** on the Mac: a progress bar, then the file is in `Downloads/Quakboard`, the item becomes a normal file (Open / Copy), and the file is on the clipboard (paste it into Finder).
+3. **A big file** (≥ 500 MB): progress moves, Cancel works and leaves no `.partial` file, and fetching again completes.
+4. **Edit the file after sending,** then fetch: "the file changed on the other device; send it again". **Delete it:** "moved or deleted".
+5. **Quit the sending app,** then fetch: "… is offline or unreachable", and Try again works once it's back.
+6. **Name clash:** fetch the same name twice, and the second becomes `name (1).ext`. The first is untouched.
+7. **Change the folder** in Devices: the next fetch lands there.
+8. **Three devices:** send to one of two other devices; only that one gets the item, and the other can't fetch it.
+9. "Copy file to clipboard" on Linux: pasting into the file manager pastes the file.
 
 ## Decisions (confirmed)
 1. **Offers never expire.** An offer lives until its item is deleted on the offering device, or the user stops sharing it. There's no 30-day expiry.

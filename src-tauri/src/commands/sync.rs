@@ -5,7 +5,10 @@ use crate::commands::settings::save_setting;
 use crate::sync::{
     body::MAX_IMAGE_BYTES,
     discovery::short_id,
-    runtime::{local_addresses, SyncRuntime, IMAGES_SETTING_KEY, SETTING_KEY},
+    runtime::{
+        local_addresses, SyncRuntime, DOWNLOAD_DIR_SETTING_KEY, IMAGES_SETTING_KEY, SETTING_KEY,
+    },
+    sharing,
 };
 
 #[derive(Serialize)]
@@ -29,6 +32,8 @@ pub struct SyncPeer {
     id: String,
     name: String,
     last_addr: Option<String>,
+    /// Seen on the network right now (mDNS), for the Send picker.
+    is_online: bool,
 }
 
 #[derive(Serialize)]
@@ -96,6 +101,7 @@ pub fn sync_list_peers(runtime: State<'_, SyncRuntime>) -> Vec<SyncPeer> {
         .peers()
         .into_iter()
         .map(|peer| SyncPeer {
+            is_online: runtime.address_of(&peer.id).is_some(),
             id: peer.id,
             name: peer.name,
             last_addr: peer.last_addr,
@@ -153,4 +159,57 @@ pub fn sync_pair_cancel(runtime: State<'_, SyncRuntime>) {
 pub fn sync_unpair(runtime: State<'_, SyncRuntime>, peer_id: String) -> Result<(), String> {
     let service = runtime.service().ok_or("Sync is off")?;
     service.unpair(&peer_id).map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendFileResult {
+    /// Chosen devices that got the offer right now.
+    reached: usize,
+    chosen: usize,
+}
+
+#[tauri::command]
+pub async fn sync_send_file(
+    app: AppHandle,
+    runtime: State<'_, SyncRuntime>,
+    item_id: String,
+    device_ids: Vec<String>,
+) -> Result<SendFileResult, String> {
+    let reached = sharing::send_file(&app, &runtime, &item_id, &device_ids).await?;
+    Ok(SendFileResult {
+        reached,
+        chosen: device_ids.len(),
+    })
+}
+
+/// Starts the fetch; progress and the outcome arrive as events.
+#[tauri::command]
+pub fn sync_fetch_file(app: AppHandle, runtime: State<'_, SyncRuntime>, item_id: String) -> Result<(), String> {
+    sharing::start_fetch(&app, &runtime, &item_id)
+}
+
+#[tauri::command]
+pub fn sync_cancel_fetch(app: AppHandle, runtime: State<'_, SyncRuntime>, item_id: String) {
+    sharing::cancel_fetch(&app, &runtime, &item_id);
+}
+
+#[tauri::command]
+pub fn sync_get_download_dir(app: AppHandle, runtime: State<'_, SyncRuntime>) -> Result<String, String> {
+    sharing::download_dir(&app, &runtime).map(|dir| dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn sync_set_download_dir(app: AppHandle, path: String) -> Result<String, String> {
+    let dir = std::path::PathBuf::from(path.trim());
+    if !dir.is_absolute() {
+        return Err("Choose a full folder path".into());
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Can't use that folder: {e}"))?;
+    if !dir.is_dir() {
+        return Err("That path isn't a folder".into());
+    }
+    let dir = dir.to_string_lossy().to_string();
+    save_setting(app, DOWNLOAD_DIR_SETTING_KEY.into(), dir.clone())?;
+    Ok(dir)
 }

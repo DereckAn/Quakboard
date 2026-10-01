@@ -19,6 +19,9 @@
   import Button from "../ui/Button.svelte";
   import CopyButton from "../ui/CopyButton.svelte";
   import HighlightedText from "../ui/HighlightedText.svelte";
+  import RemoteFilePanel from "./RemoteFilePanel.svelte";
+  import SendFilePicker from "./SendFilePicker.svelte";
+  import type { RemoteFileInfo } from "$lib/types";
   interface Props {
     item: ClipboardItem | null;
     class?: string;
@@ -43,6 +46,7 @@
   const isSvg = $derived(item?.contentType === "svg");
   const isImage = $derived(item?.contentType === "image");
   const isFile = $derived(item?.contentType === "file");
+  let isSendOpen = $state(false);
   const safeSvg = $derived.by(() => {
     if (!isSvg || !item?.contentText) return "";
     return normalizeSvgSize(sanitizeSvg(item.contentText));
@@ -59,6 +63,11 @@
       return null;
     }
   });
+
+  // A file another device offered; its bytes are still over there.
+  const remoteFile = $derived(
+    isFile ? (parsedMetadata?.remote as RemoteFileInfo | undefined) : undefined,
+  );
 
   const fileThumbnailPath = $derived(
     isFile && parsedMetadata?.thumbnail_path
@@ -440,6 +449,17 @@
       </div>
       <div class="h-44 mx-3 mb-3 bg-transparent"></div>
     </div>
+  {:else if isFile && remoteFile}
+    <div class="flex-1 flex flex-col max-w-full">
+      <div class="flex-1 flex flex-col items-center justify-center gap-4 text-center">
+        <RemoteFilePanel
+          itemId={item.id}
+          fileName={item.fileName ?? item.contentText ?? "file"}
+          remote={remoteFile}
+        />
+      </div>
+      <div class="h-44 mx-3 mb-3 bg-transparent"></div>
+    </div>
   {:else if isFile}
     <div class="flex-1 flex flex-col max-w-full">
       <div
@@ -490,7 +510,31 @@
             <Icon name={"copy"} size={18} class="text-white mr-2 flex-1" />
             Copy file to clipboard
           </Button>
+          <Button
+            variant="outline"
+            onclick={() => (isSendOpen = true)}
+            disabled={!fileExists}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              width="1.1em"
+              height="1.1em"
+              aria-hidden="true"
+              ><path
+                fill="currentColor"
+                d="M12 11.874v4.357l7-6.69l-7-6.572v3.983c-8.775 0-11 9.732-11 9.732c2.484-4.388 6.237-4.81 11-4.81"
+              /></svg
+            >
+            Send
+          </Button>
         </div>
+        <SendFilePicker
+          isOpen={isSendOpen}
+          itemId={item.id}
+          fileName={item.fileName ?? item.contentText ?? "file"}
+          onClose={() => (isSendOpen = false)}
+        />
       </div>
       <div class="h-44 mx-3 mb-3 bg-transparent"></div>
     </div>
