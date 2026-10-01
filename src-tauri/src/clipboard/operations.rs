@@ -47,7 +47,7 @@ fn read_clipboard_content_wayland() -> Result<ClipboardContent, String> {
     // 2. Raw image data (e.g. a screenshot) — there's no file to point to, so save bytes.
     if types.iter().any(|t| t == "image/png") {
         if let Some(image) = read_image_wayland() {
-            return Ok(ClipboardContent::Image(image, false));
+            return Ok(ClipboardContent::Image(image, looks_like_screenshot_types(&types)));
         }
     }
 
@@ -207,19 +207,25 @@ fn write_text_native(text: &str) -> Result<(), String> {
 /// Write text to the Wayland clipboard via 'wl-copy'.
 /// Reads the text from stdin
 fn write_text_wayland(text: &str) -> Result<(), String> {
+    pipe_to_wl_copy(&[], text.as_bytes())
+}
+
+/// Run `wl-copy <args>` with `data` on its stdin.
+fn pipe_to_wl_copy(args: &[&str], data: &[u8]) -> Result<(), String> {
     let mut child = Command::new("wl-copy")
+        .args(args)
         .stdin(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to run wl-copy: {e}"))?;
 
-    // Write the text into wl-copy's stdin, then close it so wl-copy sees EOF.
+    // Write into wl-copy's stdin, then close it so wl-copy sees EOF.
     {
         let mut stdin = child
             .stdin
             .take()
             .ok_or("wl-copy stdin was not available")?;
         stdin
-            .write_all(text.as_bytes())
+            .write_all(data)
             .map_err(|e| format!("Failed to write to wl-copy stdin: {e}"))?;
     } // <- stdin is dropped here, sending EOF to wl-copy
 
@@ -234,6 +240,55 @@ fn write_text_wayland(text: &str) -> Result<(), String> {
     } else {
         Err(format!("wl-copy exited with status: {status}"))
     }
+}
+
+/// Put a file on the clipboard as a file (not its contents), so it pastes
+/// into a file manager or a chat app as on the device it came from.
+pub fn write_file_list(path: &Path) -> Result<(), String> {
+    // Our own write must not come back as a new copy: a fetched file is
+    // stored by its full SHA-256, while the monitor would fingerprint it and
+    // add it a second time.
+    state::request_skip_events(own_write_events());
+    match detect_backend() {
+        ClipboardBackend::Wayland => {
+            let uri_list = format!("{}\r\n", file_uri(path));
+            pipe_to_wl_copy(&["--type", "text/uri-list"], uri_list.as_bytes())
+        }
+        ClipboardBackend::Native => write_file_list_native(path),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn write_file_list_native(path: &Path) -> Result<(), String> {
+    crate::clipboard::file_handler::write_file_to_clipboard(&path.to_string_lossy())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn write_file_list_native(path: &Path) -> Result<(), String> {
+    CLIPBOARD
+        .lock()
+        .map_err(|e| e.to_string())?
+        .set()
+        .file_list(&[path])
+        .map_err(|e| e.to_string())
+}
+
+/// `file://` URI for an absolute path, as `text/uri-list` expects.
+fn file_uri(path: &Path) -> String {
+    use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+    // Everything a URI path can't carry as-is; `/` stays a separator.
+    const PATH: &AsciiSet = &CONTROLS
+        .add(b' ')
+        .add(b'"')
+        .add(b'#')
+        .add(b'%')
+        .add(b'<')
+        .add(b'>')
+        .add(b'?')
+        .add(b'`')
+        .add(b'{')
+        .add(b'}');
+    format!("file://{}", utf8_percent_encode(&path.to_string_lossy(), PATH))
 }
 
 /// Public entry point: route the write to the correct backend at runtime.
@@ -267,7 +322,16 @@ pub fn write_clipboard_image(image_path: &str) -> Result<(), String> {
     clipboard
         .set_image(image_data)
         .map_err(|e| e.to_string())
-        .map(|_| state::request_skip_events(2))
+        // Wayland reports one write as two clipboard events; elsewhere it's one.
+        .map(|_| state::request_skip_events(own_write_events()))
+}
+
+/// Clipboard events one of our own writes causes.
+fn own_write_events() -> usize {
+    match detect_backend() {
+        ClipboardBackend::Wayland => 2,
+        ClipboardBackend::Native => 1,
+    }
 }
 
 fn is_image_file_url(text: &str) -> bool {
@@ -279,6 +343,15 @@ fn path_from_file_url(url: &str) -> Option<PathBuf> {
         .decode_utf8()
         .ok()?;
     Some(PathBuf::from(decoded.as_ref()))
+}
+
+/// Screenshot tools (hyprshot, grim | wl-copy) offer only image data. An app
+/// copying an image (a browser's "Copy image") also offers its HTML or source
+/// URL, so any of those means "not a screenshot".
+fn looks_like_screenshot_types(types: &[String]) -> bool {
+    !types.iter().any(|t| {
+        t == "text/html" || t == "text/x-moz-url" || t == "chromium/x-source-url"
+    })
 }
 
 fn looks_like_screenshot_text(text: &str) -> bool {
@@ -405,4 +478,54 @@ fn read_files_wayland() -> Option<ClipboardContent> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn types(list: &[&str]) -> Vec<String> {
+        list.iter().map(|t| t.to_string()).collect()
+    }
+
+    #[test]
+    fn file_uri_is_absolute() {
+        assert_eq!(file_uri(Path::new("/home/me/report.pdf")), "file:///home/me/report.pdf");
+    }
+
+    #[test]
+    fn file_uri_encodes_spaces_and_reserved_characters() {
+        assert_eq!(
+            file_uri(Path::new("/home/me/My Report #1?.pdf")),
+            "file:///home/me/My%20Report%20%231%3F.pdf"
+        );
+    }
+
+    #[test]
+    fn file_uri_encodes_non_ascii_as_utf8() {
+        assert_eq!(file_uri(Path::new("/tmp/café.pdf")), "file:///tmp/caf%C3%A9.pdf");
+    }
+
+    #[test]
+    fn image_only_copy_looks_like_a_screenshot() {
+        // What hyprshot's `wl-copy --type image/png` offers.
+        assert!(looks_like_screenshot_types(&types(&["image/png"])));
+    }
+
+    #[test]
+    fn browser_image_copy_is_not_a_screenshot() {
+        // What Brave's "Copy image" offers.
+        assert!(!looks_like_screenshot_types(&types(&[
+            "text/x-moz-url",
+            "text/html",
+            "image/png",
+            "chromium/x-internal-source-rfh-token",
+            "chromium/x-source-url",
+        ])));
+    }
+
+    #[test]
+    fn image_with_html_is_not_a_screenshot() {
+        assert!(!looks_like_screenshot_types(&types(&["image/png", "text/html"])));
+    }
 }

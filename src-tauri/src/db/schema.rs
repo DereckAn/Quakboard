@@ -60,5 +60,8 @@ pub fn init_database(conn: &Connection) -> Result<()> {
     crate::db::fts_migration::init_fts_table(conn)?;
     crate::db::fts_migration::create_fts_triggers(conn)?;
 
+    // After clipboard_items: its trigger revokes offers when items are deleted.
+    crate::sync::offers::init_offers_table(conn)?;
+
     Ok(())
 }

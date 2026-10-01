@@ -4,6 +4,7 @@ import type {
   LabFeatureId,
   LabFeatureWithMeta,
   NearbyDevice,
+  SendFileResult,
   SyncPeer,
   SyncStatus,
   UpdateClipboardItemDto,
@@ -453,6 +454,12 @@ export async function tauriSyncSetEnabled(enabled: boolean): Promise<SyncStatus>
   return await invoke<SyncStatus>("sync_set_enabled", { enabled });
 }
 
+export async function tauriSyncSetImagesEnabled(
+  enabled: boolean,
+): Promise<SyncStatus> {
+  return await invoke<SyncStatus>("sync_set_images_enabled", { enabled });
+}
+
 export async function tauriSyncListPeers(): Promise<SyncPeer[]> {
   return await invoke<SyncPeer[]>("sync_list_peers");
 }
@@ -483,4 +490,43 @@ export async function tauriSyncPairCancel(): Promise<void> {
 
 export async function tauriSyncUnpair(peerId: string): Promise<void> {
   await invoke("sync_unpair", { peerId });
+}
+
+// File sharing
+export async function tauriSyncSendFile(
+  itemId: string,
+  deviceIds: string[],
+): Promise<SendFileResult> {
+  return await invoke<SendFileResult>("sync_send_file", { itemId, deviceIds });
+}
+
+export async function tauriSyncFetchFile(itemId: string): Promise<void> {
+  await invoke("sync_fetch_file", { itemId });
+}
+
+export async function tauriSyncCancelFetch(itemId: string): Promise<void> {
+  await invoke("sync_cancel_fetch", { itemId });
+}
+
+export async function tauriSyncGetDownloadDir(): Promise<string> {
+  return await invoke<string>("sync_get_download_dir");
+}
+
+/** Shows a folder picker; resolves to the folder saved, or null if closed. */
+export async function tauriSyncChooseDownloadDir(): Promise<string | null> {
+  return await invoke<string | null>("sync_choose_download_dir");
+}
+
+/**
+ * Shows a folder picker from the backend, which keeps the window from
+ * auto-hiding behind it. Resolves to the chosen folder, or null if closed.
+ */
+export async function tauriChooseFolder(
+  title: string,
+  startIn?: string | null,
+): Promise<string | null> {
+  return await invoke<string | null>("choose_folder", {
+    title,
+    startIn: startIn || null,
+  });
 }

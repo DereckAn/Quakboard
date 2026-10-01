@@ -57,6 +57,10 @@
   });
 
   const thumbnailPath = $derived(parsedMetadata?.thumbnail_path || null);
+  // Offered by another device and not fetched yet.
+  const remoteOrigin = $derived<string | null>(
+    parsedMetadata?.remote?.origin_name ?? null,
+  );
   const originalName = $derived(
     parsedMetadata?.original_name || item.fileName || null
   );
@@ -341,6 +345,9 @@
     {#if (isFile || isImage) && originalName}
       <p class="text-sm text-text truncate">
         {originalName}
+        {#if remoteOrigin}
+          <span class="text-xs text-text-muted">· on {remoteOrigin}</span>
+        {/if}
       </p>
     {:else}
       <p class="text-sm text-text truncate">

@@ -3,6 +3,8 @@
   import Button from "$lib/components/ui/Button.svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
   import {
+    tauriSyncChooseDownloadDir,
+    tauriSyncGetDownloadDir,
     tauriSyncGetStatus,
     tauriSyncListNearby,
     tauriSyncListPeers,
@@ -12,6 +14,7 @@
     tauriSyncPairSubmitCode,
     tauriSyncSetAcceptingPairing,
     tauriSyncSetEnabled,
+    tauriSyncSetImagesEnabled,
     tauriSyncUnpair,
   } from "$lib/tauri/commands";
   import type {
@@ -29,6 +32,8 @@
   let peers = $state<SyncPeer[]>([]);
   let nearby = $state<NearbyDevice[]>([]);
   let isToggling = $state(false);
+  let isTogglingImages = $state(false);
+  let downloadDir = $state<string | null>(null);
   let errorMessage = $state<string | null>(null);
   let notice = $state<string | null>(null);
   let confirmingUnpairId = $state<string | null>(null);
@@ -49,6 +54,10 @@
   let isDestroyed = false;
 
   const isRunning = $derived(status?.running ?? false);
+  const syncsImages = $derived(status?.syncImages ?? true);
+  const maxImageMb = $derived(
+    Math.round((status?.maxImageBytes ?? 0) / (1024 * 1024)),
+  );
   const isCodeComplete = $derived(/^\d{6}$/.test(typedCode.trim()));
 
   $effect(() => {
@@ -95,6 +104,30 @@
       errorMessage = describe(err);
     } finally {
       isToggling = false;
+    }
+  }
+
+  async function handleToggleImages() {
+    isTogglingImages = true;
+    errorMessage = null;
+    try {
+      status = await tauriSyncSetImagesEnabled(!syncsImages);
+    } catch (err) {
+      errorMessage = describe(err);
+    } finally {
+      isTogglingImages = false;
+    }
+  }
+
+  async function handleChangeDownloadDir() {
+    errorMessage = null;
+    try {
+      // The picker runs in the backend, which keeps the window from
+      // auto-hiding while the dialog has the focus.
+      const chosen = await tauriSyncChooseDownloadDir();
+      if (chosen) downloadDir = chosen;
+    } catch (err) {
+      errorMessage = describe(err);
     }
   }
 
@@ -193,6 +226,7 @@
 
     await refresh();
     await acceptPairingWhileOpen();
+    downloadDir = await tauriSyncGetDownloadDir().catch(() => null);
     refreshTimer = setInterval(refresh, REFRESH_INTERVAL_MS);
   });
 
@@ -251,6 +285,42 @@
         · IP <span class="text-text">{status.addresses.join(", ")}</span>
       {/if}
     </p>
+
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <p class="text-sm font-medium text-text">Also sync images</p>
+        <p class="text-xs text-text-muted">
+          Screenshots and copied pictures up to {maxImageMb} MB. Turn off if
+          you often copy screenshots with private information.
+        </p>
+      </div>
+      <button
+        onclick={handleToggleImages}
+        disabled={isTogglingImages}
+        class={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-60 ${syncsImages ? "bg-primary" : "bg-border"}`}
+        role="switch"
+        aria-label="Also sync images"
+        aria-checked={syncsImages}
+      >
+        <span
+          class={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+            syncsImages ? "translate-x-6" : "translate-x-1"
+          }`}
+        ></span>
+      </button>
+    </div>
+
+    <div class="flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <p class="text-sm font-medium text-text">Fetched files go to</p>
+        <p class="text-xs text-text-muted break-all">
+          {downloadDir ?? "…"}
+        </p>
+      </div>
+      <Button variant="outline" size="sm" onclick={handleChangeDownloadDir}>
+        Change…
+      </Button>
+    </div>
 
     <div class="space-y-2">
       <h3 class="text-sm font-medium text-text">Paired devices</h3>

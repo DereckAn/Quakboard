@@ -5,11 +5,18 @@ use crate::clipboard::image_handler::{
 };
 use crate::clipboard::listener::ClipboardEvent;
 use crate::clipboard::operations::{read_clipboard_content, ClipboardContent};
+use crate::clipboard::backend::{detect_backend, ClipboardBackend};
 use crate::clipboard::state;
 use crate::clipboard::types::{detect_code_language, detect_content_type, get_source_app};
 use crate::db::models::CreateClipboardItemDto;
 use crate::db::repository::ClipboardRepository;
-use crate::sync::{runtime::SyncRuntime, ClipPayload};
+use crate::clipboard::image_handler::StoredImageInfo;
+use crate::sync::{
+    image::{encode_png, pixel_hash, ImageDetails},
+    runtime::SyncRuntime,
+    service::SyncService,
+    ClipPayload,
+};
 use std::{
     fs,
     sync::Arc,
@@ -22,7 +29,8 @@ use tokio::sync::Mutex;
 pub struct ClipboardMonitor {
     event_rx: Mutex<Option<UnboundedReceiver<ClipboardEvent>>>,
     last_text_content: Arc<Mutex<String>>,
-    last_image_hash: Arc<Mutex<Option<Vec<u8>>>>,
+    /// Last image seen and when, to drop duplicate events for one copy.
+    last_image_hash: Arc<Mutex<Option<SeenImage>>>,
     last_file_path: Arc<Mutex<Option<(std::path::PathBuf, Instant)>>>,
     repo_path: String,
     images_dir: std::path::PathBuf,
@@ -140,8 +148,9 @@ impl ClipboardMonitor {
                                     }
                                 }
 
-                                let _ = std::fs::remove_file(&info.full_path);
-                                let _ = std::fs::remove_file(&info.thumb_path);
+                                // NOTE: never delete `info.full_path` here. In pointer mode
+                                // (`copy_image_file_to_storage`) it IS the user's original
+                                // file, not a copy of ours; nothing was created to clean up.
                                 return;
                             }
                         }
@@ -313,12 +322,6 @@ impl ClipboardMonitor {
                 }
             }
             Ok(ClipboardContent::Image(image_data, screenshot_hint)) => {
-                // When the capture-folder watcher is active it stores screenshots
-                // as pointers, so skip saving the raw bytes to avoid a duplicate.
-                if state::should_suppress_screenshot_bytes() {
-                    return;
-                }
-
                 use std::collections::hash_map::DefaultHasher;
                 use std::hash::{Hash, Hasher};
 
@@ -328,12 +331,47 @@ impl ClipboardMonitor {
 
                 {
                     let mut last_hash = self.last_image_hash.lock().await;
-                    if let Some(previous_hash) = last_hash.as_ref() {
-                        if *previous_hash == current_hash {
-                            return;
-                        }
+                    let now = Instant::now();
+                    if is_repeat_image_event(last_hash.as_ref(), &current_hash, now) {
+                        return;
                     }
-                    *last_hash = Some(current_hash.clone());
+                    *last_hash = Some((current_hash.clone(), now));
+                }
+
+                // An image a paired device just sent was already stored by the
+                // receiver; our own clipboard write of it must not be stored or
+                // sent again. Checked after `last_image_hash` is updated, so a
+                // duplicate event for the same write is still filtered above.
+                // None unless sync is on *and* the user lets images sync.
+                let sync = self
+                    .app_handle
+                    .try_state::<SyncRuntime>()
+                    .and_then(|runtime| runtime.service())
+                    .filter(|service| service.is_syncing_images());
+                if let Some(sync) = &sync {
+                    let hash = pixel_hash(
+                        image_data.width as u32,
+                        image_data.height as u32,
+                        &image_data.bytes,
+                    );
+                    if sync.take_image_echo(&hash) {
+                        return;
+                    }
+                }
+
+                // When the capture-folder watcher is active it stores screenshots
+                // as pointers, so skip saving the raw bytes to avoid a duplicate.
+                // Paired devices have no such file, so still send them the image.
+                // Only Wayland can tell a screenshot from an app's image copy (see
+                // `looks_like_screenshot_types`); elsewhere keep skipping them all.
+                let is_wayland = detect_backend() == ClipboardBackend::Wayland;
+                let is_watcher_screenshot = state::should_suppress_screenshot_bytes()
+                    && (screenshot_hint || !is_wayland);
+                if is_watcher_screenshot {
+                    if let Some(sync) = sync {
+                        sync_pixels(sync, image_data, screenshot_hint);
+                    }
+                    return;
                 }
 
                 match save_image_to_disk(&image_data, &self.images_dir, screenshot_hint) {
@@ -353,6 +391,12 @@ impl ClipboardMonitor {
                                     {
                                         eprintln!("Failed to emit clipboard-item-added event: {e}");
                                     }
+                                }
+
+                                // Copying it again is a copy: sync it, from the
+                                // stored file (the fresh one is deleted below).
+                                if let Some(stored) = existing_item.file_url.as_deref() {
+                                    sync_image(sync.clone(), stored.into(), image_details(&info));
                                 }
 
                                 let _ = std::fs::remove_file(&info.full_path);
@@ -416,6 +460,7 @@ impl ClipboardMonitor {
                                     }
 
                                     println!("Saved clipboard image: {}", item.id);
+                                    sync_image(sync.clone(), info.full_path.clone(), image_details(&info));
 
                                     if let Err(e) =
                                         self.app_handle.emit("clipboard-item-added", &item)
@@ -660,4 +705,98 @@ fn extract_text_preview(path: &std::path::Path, max_bytes: usize) -> Result<Stri
         text.push_str("\n…");
     }
     Ok(text)
+}
+
+fn image_details(info: &StoredImageInfo) -> ImageDetails {
+    ImageDetails {
+        width: info.width,
+        height: info.height,
+        is_screenshot: info.is_screenshot,
+    }
+}
+
+/// Send a stored image to paired devices in the background. `sync` is None
+/// while sync is off.
+fn sync_image(sync: Option<Arc<SyncService>>, png_path: std::path::PathBuf, details: ImageDetails) {
+    let Some(sync) = sync else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        match tokio::fs::read(&png_path).await {
+            Ok(png) => {
+                sync.broadcast_image(&png, details).await;
+            }
+            Err(e) => eprintln!("Could not read image to sync {}: {e}", png_path.display()),
+        }
+    });
+}
+
+/// Send an image that isn't saved locally (the folder watcher stores it as a
+/// file instead): encode its pixels to PNG in memory, then broadcast.
+fn sync_pixels(sync: Arc<SyncService>, image: arboard::ImageData<'static>, is_screenshot: bool) {
+    let details = ImageDetails {
+        width: image.width as u32,
+        height: image.height as u32,
+        is_screenshot,
+    };
+    tauri::async_runtime::spawn(async move {
+        // PNG encoding takes real CPU for big screenshots.
+        let encoded = tauri::async_runtime::spawn_blocking(move || {
+            encode_png(details.width, details.height, &image.bytes)
+        })
+        .await;
+        match encoded {
+            Ok(Ok(png)) => {
+                sync.broadcast_image(&png, details).await;
+            }
+            Ok(Err(e)) => eprintln!("Could not encode image to sync: {e}"),
+            Err(e) => eprintln!("Image encoding for sync failed to run: {e}"),
+        }
+    });
+}
+
+/// One copy can fire several clipboard events within milliseconds (Wayland
+/// does); those are dropped. The same picture copied again later is a new
+/// copy: it moves up in history and syncs again, e.g. to a device that was
+/// offline the first time.
+const REPEAT_IMAGE_WINDOW: Duration = Duration::from_secs(1);
+
+/// An image's hash and when the monitor saw it.
+type SeenImage = (Vec<u8>, Instant);
+
+fn is_repeat_image_event(last: Option<&SeenImage>, hash: &[u8], now: Instant) -> bool {
+    last.is_some_and(|(last_hash, seen_at)| {
+        last_hash.as_slice() == hash && now.duration_since(*seen_at) < REPEAT_IMAGE_WINDOW
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_image_within_the_window_is_a_repeat_event() {
+        let now = Instant::now();
+        let last = (vec![1, 2, 3], now);
+        assert!(is_repeat_image_event(Some(&last), &[1, 2, 3], now + Duration::from_millis(200)));
+    }
+
+    #[test]
+    fn same_image_copied_again_later_is_a_new_copy() {
+        let now = Instant::now();
+        let last = (vec![1, 2, 3], now);
+        assert!(!is_repeat_image_event(Some(&last), &[1, 2, 3], now + Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn different_image_is_never_a_repeat() {
+        let now = Instant::now();
+        let last = (vec![1, 2, 3], now);
+        assert!(!is_repeat_image_event(Some(&last), &[9, 9, 9], now));
+    }
+
+    #[test]
+    fn first_image_is_not_a_repeat() {
+        assert!(!is_repeat_image_event(None, &[1, 2, 3], Instant::now()));
+    }
 }

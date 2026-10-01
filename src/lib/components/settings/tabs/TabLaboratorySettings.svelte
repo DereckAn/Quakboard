@@ -3,11 +3,18 @@
   import Button from "$lib/components/ui/Button.svelte";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import type { LabFeatureMeta, LabFeatureWithMeta, TabIcon } from "$lib/types";
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { tauriChooseFolder } from "$lib/tauri/commands";
 
   const chooseFolder = async (which: "screenshots" | "recordings") => {
-    const selected = await open({ directory: true, multiple: false });
-    if (typeof selected !== "string") return;
+    const selected = await tauriChooseFolder(
+      which === "screenshots"
+        ? "Choose the screenshots folder"
+        : "Choose the recordings folder",
+      which === "screenshots"
+        ? settingsStore.screenshotsDir
+        : settingsStore.recordingsDir,
+    );
+    if (!selected) return;
     if (which === "screenshots") {
       await settingsStore.updateScreenshotsDir(selected);
     } else {

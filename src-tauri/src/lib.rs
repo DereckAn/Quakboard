@@ -400,7 +400,7 @@ pub fn run() {
                             std::thread::sleep(std::time::Duration::from_millis(100));
                             // Verificar si la ventana sigue sin foco
                             if let Ok(is_focused) = window_clone.is_focused() {
-                                if !is_focused {
+                                if !is_focused && !clipboard::state::should_keep_window_open() {
                                     let _ = window_clone.hide();
                                 }
                             }
@@ -409,8 +409,11 @@ pub fn run() {
 
                     #[cfg(not(target_os = "windows"))]
                     {
-                        // macOS y Linux: ocultar inmediatamente
-                        let _ = window.hide();
+                        // macOS y Linux: ocultar inmediatamente, unless one of our
+                        // own dialogs (e.g. a folder picker) took the focus.
+                        if !clipboard::state::should_keep_window_open() {
+                            let _ = window.hide();
+                        }
                     }
                 }
             }
@@ -470,6 +473,7 @@ pub fn run() {
             commands::get_platform,
             commands::sync_get_status,
             commands::sync_set_enabled,
+            commands::sync_set_images_enabled,
             commands::sync_list_peers,
             commands::sync_list_nearby,
             commands::sync_set_accepting_pairing,
@@ -478,6 +482,12 @@ pub fn run() {
             commands::sync_pair_submit_code,
             commands::sync_pair_cancel,
             commands::sync_unpair,
+            commands::sync_send_file,
+            commands::sync_fetch_file,
+            commands::sync_cancel_fetch,
+            commands::sync_get_download_dir,
+            commands::sync_choose_download_dir,
+            commands::choose_folder,
             commands::update_screenshot_hotkeys,
             commands::unregister_screenshot_hotkeys,
         ])
