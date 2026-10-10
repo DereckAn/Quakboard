@@ -169,6 +169,13 @@ impl SyncService {
         if is_echo {
             return 0;
         }
+        self.send_clip(clip).await
+    }
+
+    /// Send a clip the user chose to send, like "Paste & Send" on a phone.
+    /// No echo guard: there's no clipboard monitor to echo, and sending back
+    /// what just arrived can be deliberate.
+    pub async fn send_clip(&self, clip: ClipPayload) -> usize {
         self.send_to_peers("text", None, |device_id, key| {
             Ok(Outgoing {
                 frame: Frame::seal_clip(device_id, key, &clip)?,
@@ -816,7 +823,7 @@ mod tests {
     use tokio::{io::AsyncWriteExt, sync::mpsc};
 
     use super::*;
-    use crate::sync::{store::STORE_FILE_NAME, PeerKey};
+    use crate::{store::STORE_FILE_NAME, PeerKey};
 
     const KEY: PeerKey = [1; 32];
     const A_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -1199,15 +1206,15 @@ mod tests {
 
     /// Send an image the way a paired device would: header frame, then body.
     async fn send_image(to: SocketAddr, from: &str, key: &PeerKey, width: u32, height: u32, png: &[u8]) {
-        let details = crate::sync::image::ImageDetails {
+        let details = crate::image::ImageDetails {
             width,
             height,
             is_screenshot: false,
         };
-        let (frame, body) = crate::sync::image::seal_image(from, key, details, png).unwrap();
+        let (frame, body) = crate::image::seal_image(from, key, details, png).unwrap();
         let mut stream = transport::connect(&to.to_string()).await.unwrap();
         transport::write_frame(&mut stream, &frame).await.unwrap();
-        crate::sync::body::write_body(&mut stream, &body, IMAGE_BODY_LIMITS)
+        crate::body::write_body(&mut stream, &body, IMAGE_BODY_LIMITS)
             .await
             .unwrap();
     }
@@ -1243,7 +1250,7 @@ mod tests {
 
         assert_eq!(
             next_image(&mut b).await.unwrap().pixel_hash,
-            crate::sync::image::pixel_hash(4, 3, pixels.as_raw())
+            crate::image::pixel_hash(4, 3, pixels.as_raw())
         );
     }
 
@@ -1355,7 +1362,7 @@ mod tests {
 
         assert!(!b
             .service
-            .take_image_echo(&crate::sync::image::pixel_hash(5, 5, other.as_raw())));
+            .take_image_echo(&crate::image::pixel_hash(5, 5, other.as_raw())));
     }
 
     #[tokio::test]
@@ -1419,7 +1426,7 @@ mod tests {
     }
 
     async fn send_offer(to: SocketAddr, from: &str, info: &FileOfferInfo) {
-        let frame = crate::sync::offers::seal_file_offer(from, &KEY, info).unwrap();
+        let frame = crate::offers::seal_file_offer(from, &KEY, info).unwrap();
         transport::send_frame(&to.to_string(), &frame).await.unwrap();
     }
 
@@ -1502,8 +1509,8 @@ mod tests {
         owner: &Device,
         as_id: &str,
         offer_id: &str,
-    ) -> Result<Vec<u8>, Option<crate::sync::fetch::RefusalReason>> {
-        use crate::sync::fetch::{decode_salt, open_fetch_reply, seal_fetch_request};
+    ) -> Result<Vec<u8>, Option<crate::fetch::RefusalReason>> {
+        use crate::fetch::{decode_salt, open_fetch_reply, seal_fetch_request};
 
         let mut stream = transport::connect(&owner.addr.to_string()).await.unwrap();
         let request = seal_fetch_request(as_id, &KEY, offer_id).unwrap();
@@ -1517,7 +1524,7 @@ mod tests {
 
         let mut file = Vec::new();
         let context = stream_context(offer_id, &owner.service.identity().0);
-        crate::sync::stream::receive_stream(
+        crate::stream::receive_stream(
             &mut stream,
             &mut file,
             &KEY,
@@ -1559,7 +1566,7 @@ mod tests {
 
         assert_eq!(
             fetch(&a, "c", SHARED_OFFER).await,
-            Err(Some(crate::sync::fetch::RefusalReason::NotShared))
+            Err(Some(crate::fetch::RefusalReason::NotShared))
         );
     }
 
@@ -1568,7 +1575,7 @@ mod tests {
         let (a, _b) = paired_devices().await;
         assert_eq!(
             fetch(&a, "b", SHARED_OFFER).await,
-            Err(Some(crate::sync::fetch::RefusalReason::NotShared))
+            Err(Some(crate::fetch::RefusalReason::NotShared))
         );
     }
 
@@ -1580,7 +1587,7 @@ mod tests {
 
         assert_eq!(
             fetch(&a, "b", SHARED_OFFER).await,
-            Err(Some(crate::sync::fetch::RefusalReason::Missing))
+            Err(Some(crate::fetch::RefusalReason::Missing))
         );
     }
 
@@ -1592,7 +1599,7 @@ mod tests {
 
         assert_eq!(
             fetch(&a, "b", SHARED_OFFER).await,
-            Err(Some(crate::sync::fetch::RefusalReason::Changed))
+            Err(Some(crate::fetch::RefusalReason::Changed))
         );
     }
 

@@ -1,0 +1,27 @@
+[package]
+name = "quakboard-sync-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "Swift and Kotlin bindings for the Quakboard sync core, via UniFFI"
+publish = false
+
+[lib]
+# lib: Rust tests and the bindgen binary. cdylib: Android, and generating
+# bindings from the built library. staticlib (iOS) comes with Phase 3.
+crate-type = ["lib", "cdylib"]
+
+[features]
+# Builds the `uniffi-bindgen` tool that writes the Swift and Kotlin bindings.
+bindgen = ["uniffi/cli"]
+
+[[bin]]
+name = "uniffi-bindgen"
+required-features = ["bindgen"]
+
+[dependencies]
+quakboard-sync = { path = "../quakboard-sync", default-features = false }
+tokio = { version = "1", features = ["full"] }
+uniffi = "0.32.2"
+
+[dev-dependencies]
+tempfile = "3.8"

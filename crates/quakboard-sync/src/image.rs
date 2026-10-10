@@ -160,6 +160,14 @@ pub fn decode_png(png: &[u8], meta: &ImageMeta) -> Result<DecodedImage, SyncErro
     })
 }
 
+/// The size a PNG declares, read from its header without decoding it. Fails
+/// for anything that isn't a PNG.
+pub fn png_dimensions(png: &[u8]) -> Result<(u32, u32), SyncError> {
+    ImageReader::with_format(Cursor::new(png), ImageFormat::Png)
+        .into_dimensions()
+        .map_err(|e| SyncError::Malformed(format!("not a usable PNG: {e}")))
+}
+
 /// Encode clipboard pixels (8-bit RGBA, row by row) as a PNG in memory, for
 /// sending an image that isn't saved locally. CPU-heavy for big images:
 /// callers run it off the async workers.
@@ -251,6 +259,20 @@ mod tests {
     /// Stand-in PNG bytes; sealing never parses them (decoding is step 3).
     fn png(seed: u8) -> Vec<u8> {
         (0..2048).map(|i| (i as u8).wrapping_mul(seed)).collect()
+    }
+
+    #[test]
+    fn png_dimensions_come_from_its_header() {
+        let png = encode_png(3, 2, &rgba_pixels()).unwrap();
+        assert_eq!(png_dimensions(&png).unwrap(), (3, 2));
+    }
+
+    #[test]
+    fn png_dimensions_reject_what_isnt_a_png() {
+        assert!(matches!(
+            png_dimensions(&png(3)),
+            Err(SyncError::Malformed(_))
+        ));
     }
 
     fn sealed(seed: u8) -> (Frame, Vec<u8>) {
