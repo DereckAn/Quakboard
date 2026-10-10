@@ -15,8 +15,12 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub mod body;
 pub mod discovery;
+pub mod fetch;
+pub mod fetching;
 pub mod image;
+pub mod offers;
 pub mod pairing;
+pub mod remote_files;
 pub mod store;
 pub mod stream;
 pub mod transport;

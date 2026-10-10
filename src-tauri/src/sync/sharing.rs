@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use super::{
     fetching::RemoteFile,
     offers::{create_offer, hash_file, FileOfferInfo},
+    remote_files::remote_file_of,
     runtime::{SyncRuntime, DOWNLOAD_DIR_SETTING_KEY},
 };
 use crate::{
@@ -69,7 +70,7 @@ pub async fn send_file(
     }
     let service = runtime.service().ok_or("Sync is off")?;
     let item = load_item(app, item_id)?;
-    if RemoteFile::of(&item).is_some() {
+    if remote_file_of(&item).is_some() {
         return Err("This file is on another device; fetch it first".into());
     }
     let path = item
@@ -119,7 +120,7 @@ pub async fn send_file(
 pub fn start_fetch(app: &AppHandle, runtime: &SyncRuntime, item_id: &str) -> Result<(), String> {
     let service = runtime.service().ok_or("Sync is off")?;
     let item = load_item(app, item_id)?;
-    let remote = RemoteFile::of(&item).ok_or("This file is already on this device")?;
+    let remote = remote_file_of(&item).ok_or("This file is already on this device")?;
     let dest = download_dir(app, runtime)?;
 
     let mut fetches = lock(&runtime.fetches);

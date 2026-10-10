@@ -158,7 +158,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::sync::offers::hash_file;
+    use crate::offers::hash_file;
 
     const KEY: PeerKey = [5; 32];
 

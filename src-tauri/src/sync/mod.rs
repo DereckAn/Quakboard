@@ -4,12 +4,10 @@
 //! `quakboard-sync` crate; this module wires them into the app.
 
 pub use quakboard_sync::{
-    body, discovery, image, pairing, store, stream, transport, ClipPayload, Frame, PeerKey, Sealed,
-    SyncError,
+    body, discovery, fetch, fetching, image, pairing, store, stream, transport, ClipPayload, Frame,
+    PeerKey, SyncError,
 };
 
-pub mod fetch;
-pub mod fetching;
 pub mod offers;
 pub mod received;
 pub mod remote_files;
