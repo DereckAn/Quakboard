@@ -40,12 +40,14 @@ Quakboard on iPhone, iPad and later Android, syncing with the desktop app: text,
 **`SyncHooks` is already the boundary.** The service never touches the clipboard, history or UI itself; it calls `apply_clip`, `apply_image`, `apply_offer`, `lookup_offer`, `resolve_addr` and `on_pairing`. The desktop implements them with Tauri and SQLite; the phone apps will implement them in Swift or Kotlin.
 
 ## Phase 0: decisions and prerequisites (before any code)
-1. **An Apple Developer account** ($99/year). It's needed to run on a real iPhone for more than 7 days, for TestFlight, and for the App Store. Development needs the Mac with Xcode.
-2. **What the phone does in v1** (proposed):
+**Decided (2026-10-10):** the v1 scope below as proposed, and iOS 16 as the minimum. The Apple Developer account waits until the Phase 3 proof works. Until then, the simulator and Xcode's free signing (an app on your own iPhone that expires after 7 days) are enough.
+
+1. **An Apple Developer account** ($99/year). **Deferred:** buy it once Phase 3 proves the approach. It's needed to run on a real iPhone for more than 7 days, for TestFlight, and for the App Store. Development needs the Mac with Xcode.
+2. **What the phone does in v1** (**decided**):
    - **Receive** text, images and file offers **while the app is open**, and fetch files.
    - **Send** text and images through **"Paste & Send"** in the app (`UIPasteControl`, which avoids the "Allow Paste?" prompt) and through the **Share Extension** ("Share to Quakboard" from any app).
    - **Not in v1:** receiving while the app is closed. iOS suspends it, so that needs push notifications and a server (see "Later").
-3. **The minimum iOS version:** iOS 16, for `UIPasteControl` and current SwiftUI.
+3. **The minimum iOS version:** iOS 16 (**decided**), for `UIPasteControl` and current SwiftUI.
 4. **The Android minimum,** decided at Phase 6 (proposed: Android 10 / API 29).
 
 ## Phase 1: extract the shared crate (desktop behaves exactly the same)

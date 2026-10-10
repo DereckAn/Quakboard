@@ -7,8 +7,6 @@
 
 use serde_json::{json, Value};
 
-pub use quakboard_sync::remote_files::validate_offer;
-
 use super::{fetching::RemoteFile, offers::FileOfferInfo};
 use crate::db::{
     models::{ClipboardItem, CreateClipboardItemDto},

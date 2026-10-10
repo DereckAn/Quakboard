@@ -22,6 +22,7 @@ pub mod offers;
 pub mod pairing;
 pub mod protocol;
 pub mod remote_files;
+pub mod service;
 pub mod store;
 pub mod stream;
 pub mod transport;

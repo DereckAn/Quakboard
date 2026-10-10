@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-pub use quakboard_sync::offers::{
-    hash_file, open_file_offer, seal_file_offer, FileOfferInfo, FileStamp, HashedFile, Offer,
-};
+pub use quakboard_sync::offers::{hash_file, FileOfferInfo, FileStamp, HashedFile, Offer};
 
 /// Creates the offers table. Offers are revoked by a trigger whenever their
 /// clipboard item is deleted, so every delete path (single, clear all,
