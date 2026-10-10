@@ -196,8 +196,9 @@
     if (event.kind === "paired") {
       notice = `Paired with ${event.name}`;
       refresh();
-    } else if (wasPairing) {
-      // A failure after the user closed the dialog (a cancel) isn't news.
+    } else if (wasPairing || event.needsUpdate) {
+      // A failure after the user closed the dialog (a cancel) isn't news, but
+      // a device that needs updating is, even if it never showed a code.
       errorMessage = `Pairing failed: ${event.reason}`;
     }
   }
@@ -290,8 +291,10 @@
       <div>
         <p class="text-sm font-medium text-text">Also sync images</p>
         <p class="text-xs text-text-muted">
-          Screenshots and copied pictures up to {maxImageMb} MB. Turn off if
-          you often copy screenshots with private information.
+          Screenshots and images copied from apps, up to {maxImageMb} MB.
+          Image files copied in a file manager aren't sent; use Send on the
+          item. Turn off if you often copy screenshots with private
+          information.
         </p>
       </div>
       <button
@@ -337,6 +340,13 @@
                 <p class="text-xs text-text-muted">
                   {peer.lastAddr ?? "Address unknown"}
                 </p>
+                {#if peer.updateNeeded}
+                  <p class="text-xs text-danger">
+                    {peer.updateNeeded === "peerTooOld"
+                      ? `Not syncing: update Quakboard on ${peer.name}`
+                      : "Not syncing: update Quakboard on this device"}
+                  </p>
+                {/if}
               </div>
               {#if confirmingUnpairId === peer.id}
                 <div class="flex gap-2 shrink-0">

@@ -17,6 +17,8 @@ export interface SyncPeer {
   lastAddr: string | null;
   /** Seen on the network right now. */
   isOnline: boolean;
+  /** Set while this device refuses the peer's frames as incompatible. */
+  updateNeeded: "peerTooOld" | "thisTooOld" | null;
 }
 
 export interface NearbyDevice {
@@ -29,7 +31,7 @@ export interface NearbyDevice {
 export type PairingEvent =
   | { kind: "codeShown"; code: string }
   | { kind: "paired"; peerId: string; name: string }
-  | { kind: "failed"; reason: string };
+  | { kind: "failed"; reason: string; needsUpdate: boolean };
 
 export interface SendFileResult {
   /** Chosen devices that got the offer right now. */

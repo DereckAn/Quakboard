@@ -4515,6 +4515,7 @@ dependencies = [
  "pangocairo",
  "percent-encoding",
  "pico-args",
+ "quakboard-sync",
  "reqwest 0.11.27",
  "rusqlite",
  "scraper",
@@ -4536,8 +4537,27 @@ dependencies = [
  "tempfile",
  "tokio",
  "uuid",
+ "webkit2gtk",
  "widestring",
  "windows 0.58.0",
+]
+
+[[package]]
+name = "quakboard-sync"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "getrandom 0.3.4",
+ "image",
+ "libc",
+ "mdns-sd",
+ "serde",
+ "serde_json",
+ "sha2",
+ "spake2",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

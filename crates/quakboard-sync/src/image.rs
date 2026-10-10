@@ -592,12 +592,12 @@ mod tests {
     }
 
     #[test]
+    // NOTE: the desktop's `calculate_file_hash` pins the same value, so
+    // history hashes and sync hashes stay comparable.
     fn hash_matches_the_format_stored_in_history() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("image.png");
-        std::fs::write(&path, png(3)).unwrap();
-        let stored = crate::clipboard::image_handler::calculate_file_hash(&path).unwrap();
-
-        assert_eq!(sha256_hex(&png(3)), stored);
+        assert_eq!(
+            sha256_hex(b"hello world"),
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
     }
 }

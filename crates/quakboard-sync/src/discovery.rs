@@ -4,18 +4,26 @@
 //! instance name, host name and TXT record carry only the opaque device id, so
 //! people on the same Wi-Fi can't see a hostname or user name. Friendly names
 //! are exchanged later, encrypted, during pairing.
+//!
+//! The mDNS daemon is behind the `mdns` feature. Without it (the phone apps,
+//! which use native Bonjour/NSD) only the names both sides must agree on are
+//! here.
 
+use std::net::SocketAddr;
+#[cfg(feature = "mdns")]
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr},
     sync::{Arc, Mutex},
 };
 
+#[cfg(feature = "mdns")]
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use serde::Serialize;
 
 pub const SERVICE_TYPE: &str = "_quakboard._tcp.local.";
-const ID_PROPERTY: &str = "id";
+/// TXT key carrying the device id; the instance name is the id too.
+pub const ID_PROPERTY: &str = "id";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,14 +33,17 @@ pub struct DiscoveredDevice {
 }
 
 /// Found devices by mDNS full name, which is what removal events carry.
+#[cfg(feature = "mdns")]
 type Devices = Arc<Mutex<HashMap<String, DiscoveredDevice>>>;
 
 /// Advertises this device and tracks the others. Dropping it stops both.
+#[cfg(feature = "mdns")]
 pub struct Discovery {
     daemon: ServiceDaemon,
     devices: Devices,
 }
 
+#[cfg(feature = "mdns")]
 impl Discovery {
     pub fn start(device_id: &str, port: u16) -> Result<Self, mdns_sd::Error> {
         let daemon = ServiceDaemon::new()?;
@@ -79,6 +90,7 @@ impl Discovery {
     }
 }
 
+#[cfg(feature = "mdns")]
 impl Drop for Discovery {
     fn drop(&mut self) {
         // Also sends goodbye packets, so others drop us right away.
@@ -89,6 +101,7 @@ impl Drop for Discovery {
 }
 
 /// Apply one browse event. Everything in it came off the network.
+#[cfg(feature = "mdns")]
 fn track(devices: &Mutex<HashMap<String, DiscoveredDevice>>, own_id: &str, event: ServiceEvent) {
     match event {
         ServiceEvent::ServiceResolved(service) => {
@@ -121,6 +134,7 @@ fn track(devices: &Mutex<HashMap<String, DiscoveredDevice>>, own_id: &str, event
 
 /// Prefer a real network address: a device can advertise 127.0.0.1 too, and
 /// that only reaches it from the same machine. Lowest wins, for stability.
+#[cfg(feature = "mdns")]
 fn pick_address(addresses: impl IntoIterator<Item = Ipv4Addr>) -> Option<Ipv4Addr> {
     let (loopback, lan): (Vec<_>, Vec<_>) = addresses.into_iter().partition(Ipv4Addr::is_loopback);
     lan.into_iter().min().or_else(|| loopback.into_iter().min())
@@ -132,13 +146,14 @@ pub fn short_id(device_id: &str) -> &str {
     device_id.get(start..).unwrap_or(device_id)
 }
 
+#[cfg(feature = "mdns")]
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "mdns"))]
 mod tests {
     use super::*;
 

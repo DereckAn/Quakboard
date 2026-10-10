@@ -8,7 +8,6 @@ use std::{
     time::Duration,
 };
 
-use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::{
@@ -21,14 +20,13 @@ use super::{
     transport::{read_frame, write_frame},
     PeerKey,
 };
-use crate::db::models::ClipboardItem;
 
 /// How long the owner may take to answer: it may re-hash a big file first.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(120);
 const PARTIAL_DIR: &str = ".partial";
 const MAX_NAME_ATTEMPTS: usize = 1000;
 
-/// A remote item's offer, as `remote_files` stored it.
+/// An offered file this device can fetch: what the offer said about it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RemoteFile {
     pub offer_id: String,
@@ -37,22 +35,6 @@ pub struct RemoteFile {
     pub name: String,
     pub size: u64,
     pub sha256: String,
-}
-
-impl RemoteFile {
-    pub fn of(item: &ClipboardItem) -> Option<RemoteFile> {
-        let metadata: Value = serde_json::from_str(&item.content_metadata).ok()?;
-        let remote = metadata.get("remote")?;
-        let text = |key: &str| remote.get(key)?.as_str().map(str::to_string);
-        Some(RemoteFile {
-            offer_id: text("offer_id")?,
-            origin_id: text("origin_device_id")?,
-            origin_name: text("origin_name")?,
-            name: item.file_name.clone()?,
-            size: remote.get("size")?.as_u64()?,
-            sha256: text("sha256")?,
-        })
-    }
 }
 
 #[derive(Debug)]
@@ -312,49 +294,4 @@ mod tests {
         );
     }
 
-    fn remote_item(metadata: &str) -> ClipboardItem {
-        ClipboardItem {
-            id: "item".into(),
-            content_type: "file".into(),
-            content_text: Some("report.pdf".into()),
-            content_metadata: metadata.into(),
-            source_app: None,
-            code_language: None,
-            file_url: None,
-            file_name: Some("report.pdf".into()),
-            file_size_bytes: Some(17),
-            file_mime_type: None,
-            file_hash: None,
-            is_favorite: false,
-            is_snippet: false,
-            snippet_name: None,
-            created_at: String::new(),
-            updated_at: String::new(),
-            synced: false,
-            server_id: None,
-        }
-    }
-
-    #[test]
-    fn remote_item_describes_its_offer() {
-        let item = remote_item(
-            r#"{"remote":{"offer_id":"o","origin_device_id":"d","origin_name":"Laptop","sha256":"h","size":17}}"#,
-        );
-        assert_eq!(
-            RemoteFile::of(&item),
-            Some(RemoteFile {
-                offer_id: "o".into(),
-                origin_id: "d".into(),
-                origin_name: "Laptop".into(),
-                name: "report.pdf".into(),
-                size: 17,
-                sha256: "h".into(),
-            })
-        );
-    }
-
-    #[test]
-    fn local_item_has_no_offer() {
-        assert_eq!(RemoteFile::of(&remote_item(r#"{"source":"file"}"#)), None);
-    }
 }

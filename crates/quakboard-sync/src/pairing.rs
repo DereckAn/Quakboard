@@ -12,6 +12,10 @@
 //!                                    <-  PairDone
 //! ```
 //!
+//! Both opening frames carry their sender's `Protocol` (as every frame does),
+//! so devices that can't work together say which one needs updating before
+//! anyone types a code.
+//!
 //! SPAKE2 turns the short code into a strong shared key without revealing it:
 //! an eavesdropper learns nothing, and an active attacker gets one guess per
 //! attempt, with a fresh code every attempt. SPAKE2 itself doesn't report a
@@ -35,6 +39,7 @@ use tokio::{
 };
 
 use super::{
+    protocol::{Incompatible, Protocol},
     store::Peer,
     transport::{read_frame, write_frame},
     Frame, PeerKey, Sealed,
@@ -75,6 +80,8 @@ pub enum PairError {
     Cancelled,
     /// This device is already pairing with another.
     Busy,
+    /// One of the two devices needs a newer Quakboard.
+    Incompatible(Incompatible),
 }
 
 impl fmt::Display for PairError {
@@ -86,6 +93,7 @@ impl fmt::Display for PairError {
             PairError::Timeout => write!(f, "pairing timed out"),
             PairError::Cancelled => write!(f, "pairing was cancelled"),
             PairError::Busy => write!(f, "already pairing with another device"),
+            PairError::Incompatible(e) => write!(f, "{e}, then pair again"),
         }
     }
 }
@@ -107,6 +115,7 @@ pub async fn initiate<S: AsyncRead + AsyncWrite + Unpin>(
     code: oneshot::Receiver<String>,
 ) -> Result<Peer, PairError> {
     write_frame(stream, &Frame::PairRequest { from: me.id.into() }).await?;
+    // A responder we can't work with is refused here, by `read_frame`.
     let their_id = match next_frame(stream, STEP_TIMEOUT).await? {
         Frame::PairChallenge { from } => validated_id(from)?,
         _ => return Err(PairError::Protocol("expected PairChallenge")),
@@ -153,17 +162,23 @@ pub async fn initiate<S: AsyncRead + AsyncWrite + Unpin>(
     Ok(peer_from(their_id, their_info, peer_ip, keys.peer))
 }
 
-/// Run the responder side (B), after its listener read `PairRequest { from }`.
+/// Run the responder side (B), after its listener read `PairRequest` and the
+/// protocol it was stamped with.
 /// `show_code` is called once with the code the user must type on the other device.
 pub async fn respond<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     me: &LocalDevice<'_>,
     their_id: String,
+    their_protocol: Protocol,
     peer_ip: IpAddr,
     show_code: impl FnOnce(String),
 ) -> Result<Peer, PairError> {
     let their_id = validated_id(their_id)?;
+    // Sent even to a device we'll refuse: our stamp tells it why.
     write_frame(stream, &Frame::PairChallenge { from: me.id.into() }).await?;
+    Protocol::CURRENT
+        .check(their_protocol)
+        .map_err(PairError::Incompatible)?;
 
     let code = generate_code()?;
     show_code(code.clone());
@@ -297,7 +312,10 @@ async fn next_frame<S: AsyncRead + Unpin>(stream: &mut S, wait: Duration) -> Res
     timeout(wait, read_frame(stream))
         .await
         .map_err(|_| PairError::Timeout)?
-        .map_err(PairError::Io)
+        .map_err(|e| match Incompatible::of(&e) {
+            Some(refusal) => PairError::Incompatible(refusal),
+            None => PairError::Io(e),
+        })
 }
 
 #[cfg(test)]
@@ -305,6 +323,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use super::*;
+    use crate::transport::{read_stamped, write_stamped, Incoming};
 
     const A_ID: &str = "11111111-1111-4111-8111-111111111111";
     const B_ID: &str = "22222222-2222-4222-8222-222222222222";
@@ -339,13 +358,21 @@ mod tests {
         });
         let b = tokio::spawn(async move {
             // The listener reads the opening PairRequest before handing over.
-            let Frame::PairRequest { from } = read_frame(&mut b_stream).await.unwrap() else {
+            let opening = read_stamped(&mut b_stream).await.unwrap();
+            let Incoming::Frame(Frame::PairRequest { from }, protocol) = opening else {
                 panic!("expected PairRequest first");
             };
             let mut code_tx = Some(code_tx);
-            let result = respond(&mut b_stream, &device_b(), from, LOCALHOST, |code| {
-                let _ = code_tx.take().unwrap().send(typed(code));
-            })
+            let result = respond(
+                &mut b_stream,
+                &device_b(),
+                from,
+                protocol,
+                LOCALHOST,
+                |code| {
+                    let _ = code_tx.take().unwrap().send(typed(code));
+                },
+            )
             .await;
             // Hang up like a real connection would when this side is done.
             drop(b_stream);
@@ -404,7 +431,15 @@ mod tests {
         let (mut a_stream, mut b_stream) = tokio::io::duplex(64 * 1024);
         let (code_tx, code_rx) = oneshot::channel::<String>();
         tokio::spawn(async move {
-            let _ = respond(&mut b_stream, &device_b(), A_ID.into(), LOCALHOST, |_| {}).await;
+            let _ = respond(
+                &mut b_stream,
+                &device_b(),
+                A_ID.into(),
+                Protocol::CURRENT,
+                LOCALHOST,
+                |_| {},
+            )
+            .await;
         });
         drop(code_tx);
 
@@ -415,9 +450,67 @@ mod tests {
     #[tokio::test]
     async fn responder_rejects_a_non_uuid_device_id() {
         let (_a_stream, mut b_stream) = tokio::io::duplex(64 * 1024);
-        let result =
-            respond(&mut b_stream, &device_b(), "not-a-uuid".into(), LOCALHOST, |_| {}).await;
+        let result = respond(
+            &mut b_stream,
+            &device_b(),
+            "not-a-uuid".into(),
+            Protocol::CURRENT,
+            LOCALHOST,
+            |_| {},
+        )
+        .await;
         assert!(matches!(result, Err(PairError::Protocol(_))));
+    }
+
+    // ---- protocol versions ----
+
+    /// A future device that no longer pairs with this build.
+    const FUTURE: Protocol = Protocol {
+        version: 2,
+        min_peer: 2,
+    };
+
+    #[tokio::test]
+    async fn responder_refuses_a_device_it_cannot_work_with() {
+        let (_a_stream, mut b_stream) = tokio::io::duplex(64 * 1024);
+        let mut shown = false;
+        let result = respond(
+            &mut b_stream,
+            &device_b(),
+            A_ID.into(),
+            FUTURE,
+            LOCALHOST,
+            |_| shown = true,
+        )
+        .await;
+
+        let refused = matches!(
+            result,
+            Err(PairError::Incompatible(Incompatible::ThisTooOld))
+        );
+        assert_eq!((refused, shown), (true, false));
+    }
+
+    #[tokio::test]
+    async fn initiator_refuses_before_the_code_is_typed() {
+        let (mut a_stream, mut b_stream) = tokio::io::duplex(64 * 1024);
+        tokio::spawn(async move {
+            read_frame(&mut b_stream).await.unwrap();
+            let challenge = Frame::PairChallenge { from: B_ID.into() };
+            write_stamped(&mut b_stream, &challenge, FUTURE)
+                .await
+                .unwrap();
+            // Keep the connection open: the initiator must not wait for a code.
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
+        // Never sent: a refusal must not depend on the user typing anything.
+        let (_code_tx, code_rx) = oneshot::channel();
+
+        let result = initiate(&mut a_stream, &device_a(), LOCALHOST, code_rx).await;
+        assert!(matches!(
+            result,
+            Err(PairError::Incompatible(Incompatible::ThisTooOld))
+        ));
     }
 
     #[test]
