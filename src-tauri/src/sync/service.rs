@@ -2,6 +2,7 @@
 //! copies to them, and pairs new devices.
 
 use std::{
+    collections::HashMap,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::{
@@ -31,8 +32,10 @@ use super::{
     stream::{new_salt, send_stream},
     remote_files::validate_offer,
     pairing::{self, LocalDevice, PairError},
+    protocol::{Incompatible, Protocol},
     store::{Peer, StoreError, SyncStore},
-    transport, ClipPayload, Frame, PeerKey, SyncError,
+    transport::{self, Incoming},
+    ClipPayload, Frame, PeerKey, SyncError,
 };
 
 /// How long after receiving an image the monitor may still see our own write
@@ -93,7 +96,12 @@ pub enum PairingEvent {
     #[serde(rename_all = "camelCase")]
     Paired { peer_id: String, name: String },
     #[serde(rename_all = "camelCase")]
-    Failed { reason: String },
+    Failed {
+        reason: String,
+        /// One of the devices needs a newer Quakboard. Worth showing even
+        /// when no pairing dialog is open, unlike a cancel.
+        needs_update: bool,
+    },
 }
 
 pub struct SyncService {
@@ -112,6 +120,9 @@ pub struct SyncService {
     /// Pixel hash of the last received image and when it arrived. See
     /// `take_image_echo`.
     last_received_image: Mutex<Option<(String, Instant)>>,
+    /// Paired devices whose last frame was refused as incompatible. Only
+    /// shown to the user, never saved: the protocol stamp can be forged.
+    incompatible: Mutex<HashMap<String, Incompatible>>,
     hooks: SyncHooks,
 }
 
@@ -131,6 +142,7 @@ impl SyncService {
             syncs_images: AtomicBool::new(true),
             last_received: Mutex::new(None),
             last_received_image: Mutex::new(None),
+            incompatible: Mutex::new(HashMap::new()),
             hooks,
         })
     }
@@ -138,9 +150,9 @@ impl SyncService {
     pub async fn listen(self: Arc<Self>, listener: TcpListener) {
         transport::serve(
             listener,
-            Arc::new(move |frame, stream, addr| {
+            Arc::new(move |incoming, stream, addr| {
                 let service = self.clone();
-                Box::pin(async move { service.handle_connection(frame, stream, addr).await })
+                Box::pin(async move { service.handle_connection(incoming, stream, addr).await })
             }),
         )
         .await;
@@ -395,7 +407,29 @@ impl SyncService {
         (store.device_id.clone(), store.device_name.clone())
     }
 
-    async fn handle_connection(&self, frame: Frame, mut stream: TcpStream, addr: SocketAddr) {
+    /// Why the last frame from this paired device was refused, if it was.
+    pub fn incompatibility(&self, peer_id: &str) -> Option<Incompatible> {
+        lock(&self.incompatible).get(peer_id).copied()
+    }
+
+    async fn handle_connection(&self, incoming: Incoming, mut stream: TcpStream, addr: SocketAddr) {
+        let (frame, protocol) = match incoming {
+            Incoming::Frame(frame, protocol) => (frame, protocol),
+            Incoming::Incompatible { sender, reason } => {
+                self.note_compatibility(sender.as_deref(), Err(reason));
+                eprintln!("Refused a sync frame from {addr}: {reason}");
+                return;
+            }
+        };
+        // Pairing answers before refusing, so the other device learns why.
+        if !matches!(frame, Frame::PairRequest { .. }) {
+            let verdict = Protocol::CURRENT.check(protocol);
+            self.note_compatibility(frame.sender(), verdict);
+            if let Err(refusal) = verdict {
+                eprintln!("Refused a sync frame from {addr}: {refusal}");
+                return;
+            }
+        }
         match frame {
             Frame::Clip { .. } => self.handle_clip(frame, addr),
             Frame::Image { .. } => self.handle_image(frame, &mut stream, addr).await,
@@ -413,10 +447,11 @@ impl SyncService {
                 let (id, name) = self.identity();
                 let me = self.local_device(&id, &name);
                 let on_pairing = self.hooks.on_pairing.clone();
-                let result = pairing::respond(&mut stream, &me, from, addr.ip(), |code| {
-                    on_pairing(PairingEvent::CodeShown { code })
-                })
-                .await;
+                let result =
+                    pairing::respond(&mut stream, &me, from, protocol, addr.ip(), |code| {
+                        on_pairing(PairingEvent::CodeShown { code })
+                    })
+                    .await;
                 // Errors are already reported to the UI through the hook.
                 let _ = self.finish_pairing(result);
             }
@@ -644,6 +679,22 @@ impl SyncService {
     }
 
     /// Persist a successful pairing and report the outcome to the UI.
+    /// Remember whether a paired device's frames are being refused. Ids that
+    /// aren't paired are ignored, so strangers can't grow the map.
+    fn note_compatibility(&self, sender: Option<&str>, verdict: Result<(), Incompatible>) {
+        let Some(id) = sender else {
+            return;
+        };
+        if lock(&self.store).peer(id).is_none() {
+            return;
+        }
+        let mut incompatible = lock(&self.incompatible);
+        match verdict {
+            Ok(()) => incompatible.remove(id),
+            Err(refusal) => incompatible.insert(id.to_string(), refusal),
+        };
+    }
+
     fn finish_pairing(&self, result: Result<Peer, PairError>) -> Result<Peer, PairError> {
         let outcome = result.and_then(|peer| {
             let mut store = lock(&self.store);
@@ -665,6 +716,7 @@ impl SyncService {
             },
             Err(e) => PairingEvent::Failed {
                 reason: e.to_string(),
+                needs_update: matches!(e, PairError::Incompatible(_)),
             },
         });
         outcome
@@ -761,7 +813,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 mod tests {
     use std::collections::HashMap;
 
-    use tokio::sync::mpsc;
+    use tokio::{io::AsyncWriteExt, sync::mpsc};
 
     use super::*;
     use crate::sync::{store::STORE_FILE_NAME, PeerKey};
@@ -911,6 +963,113 @@ mod tests {
         a.service.broadcast(clip("hello b")).await;
 
         assert_eq!(next_clip(&mut b).await, Some(clip("hello b")));
+    }
+
+    /// A future device that no longer works with this build.
+    const FUTURE: Protocol = Protocol {
+        version: 2,
+        min_peer: 2,
+    };
+
+    /// Send `frame` to `to` stamped as `FUTURE`. Returns the open connection.
+    async fn send_from_the_future(to: SocketAddr, frame: &Frame) -> TcpStream {
+        let mut stream = transport::connect(&to.to_string()).await.unwrap();
+        transport::write_stamped(&mut stream, frame, FUTURE)
+            .await
+            .unwrap();
+        stream
+    }
+
+    fn future_clip() -> Frame {
+        Frame::seal_clip("a", &KEY, &clip("from the future")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn clip_from_a_device_we_cannot_work_with_is_dropped() {
+        let (_a, mut b) = paired_devices().await;
+        send_from_the_future(b.addr, &future_clip()).await;
+
+        assert_eq!(next_clip(&mut b).await, None);
+    }
+
+    #[tokio::test]
+    async fn paired_device_we_cannot_work_with_is_flagged() {
+        let (_a, mut b) = paired_devices().await;
+        send_from_the_future(b.addr, &future_clip()).await;
+        next_clip(&mut b).await;
+
+        assert_eq!(
+            b.service.incompatibility("a"),
+            Some(Incompatible::ThisTooOld)
+        );
+    }
+
+    #[tokio::test]
+    async fn compatible_frame_clears_the_flag() {
+        let (a, mut b) = paired_devices().await;
+        send_from_the_future(b.addr, &future_clip()).await;
+        next_clip(&mut b).await;
+        a.service.broadcast(clip("updated")).await;
+        next_clip(&mut b).await;
+
+        assert_eq!(b.service.incompatibility("a"), None);
+    }
+
+    /// A frame type this build can't parse, from a device it can't work with.
+    async fn send_unknown_future_frame(to: SocketAddr, from: &str) {
+        let body = format!(
+            r#"{{"type":"ClipV2","from":"{from}","protocol":{{"version":2,"min_peer":2}}}}"#
+        );
+        let mut stream = transport::connect(&to.to_string()).await.unwrap();
+        stream
+            .write_all(&(body.len() as u32).to_be_bytes())
+            .await
+            .unwrap();
+        stream.write_all(body.as_bytes()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn unknown_future_frame_applies_nothing() {
+        let (_a, mut b) = paired_devices().await;
+        send_unknown_future_frame(b.addr, "a").await;
+
+        assert_eq!(next_clip(&mut b).await, None);
+    }
+
+    #[tokio::test]
+    async fn unknown_future_frame_flags_its_paired_sender() {
+        let (_a, mut b) = paired_devices().await;
+        send_unknown_future_frame(b.addr, "a").await;
+        next_clip(&mut b).await;
+
+        assert_eq!(
+            b.service.incompatibility("a"),
+            Some(Incompatible::ThisTooOld)
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_future_frame_from_a_stranger_is_not_tracked() {
+        let (_a, mut b) = paired_devices().await;
+        send_unknown_future_frame(b.addr, "stranger").await;
+        next_clip(&mut b).await;
+
+        assert_eq!(b.service.incompatibility("stranger"), None);
+    }
+
+    #[tokio::test]
+    async fn pairing_request_we_cannot_work_with_reports_an_update() {
+        let mut b = unpaired_device("b").await;
+        let request = Frame::PairRequest { from: A_ID.into() };
+        let _connection = send_from_the_future(b.addr, &request).await;
+
+        assert!(matches!(
+            next_event(&mut b).await,
+            PairingEvent::Failed {
+                needs_update: true,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]

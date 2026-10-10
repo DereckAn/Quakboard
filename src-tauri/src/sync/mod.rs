@@ -4,8 +4,8 @@
 //! `quakboard-sync` crate; this module wires them into the app.
 
 pub use quakboard_sync::{
-    body, discovery, fetch, fetching, image, pairing, store, stream, transport, ClipPayload, Frame,
-    PeerKey, SyncError,
+    body, discovery, fetch, fetching, image, pairing, protocol, store, stream, transport,
+    ClipPayload, Frame, PeerKey, SyncError,
 };
 
 pub mod offers;

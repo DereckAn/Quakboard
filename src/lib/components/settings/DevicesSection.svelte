@@ -196,8 +196,9 @@
     if (event.kind === "paired") {
       notice = `Paired with ${event.name}`;
       refresh();
-    } else if (wasPairing) {
-      // A failure after the user closed the dialog (a cancel) isn't news.
+    } else if (wasPairing || event.needsUpdate) {
+      // A failure after the user closed the dialog (a cancel) isn't news, but
+      // a device that needs updating is, even if it never showed a code.
       errorMessage = `Pairing failed: ${event.reason}`;
     }
   }
@@ -337,6 +338,13 @@
                 <p class="text-xs text-text-muted">
                   {peer.lastAddr ?? "Address unknown"}
                 </p>
+                {#if peer.updateNeeded}
+                  <p class="text-xs text-danger">
+                    {peer.updateNeeded === "peerTooOld"
+                      ? `Not syncing: update Quakboard on ${peer.name}`
+                      : "Not syncing: update Quakboard on this device"}
+                  </p>
+                {/if}
               </div>
               {#if confirmingUnpairId === peer.id}
                 <div class="flex gap-2 shrink-0">

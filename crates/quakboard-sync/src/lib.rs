@@ -20,6 +20,7 @@ pub mod fetching;
 pub mod image;
 pub mod offers;
 pub mod pairing;
+pub mod protocol;
 pub mod remote_files;
 pub mod store;
 pub mod stream;
@@ -154,6 +155,19 @@ impl Sealed {
 }
 
 impl Frame {
+    /// The device id a first frame claims to come from. Unauthenticated
+    /// until something sealed under that device's key opens.
+    pub fn sender(&self) -> Option<&str> {
+        match self {
+            Frame::Clip { from, .. }
+            | Frame::PairRequest { from }
+            | Frame::Image { from, .. }
+            | Frame::FileOffer { from, .. }
+            | Frame::FileFetch { from, .. } => Some(from),
+            _ => None,
+        }
+    }
+
     /// Encrypt `clip` for the peer sharing `key`. The sender id is bound as
     /// associated data, so a frame can't be replayed under another device's id.
     pub fn seal_clip(from: &str, key: &PeerKey, clip: &ClipPayload) -> Result<Frame, SyncError> {

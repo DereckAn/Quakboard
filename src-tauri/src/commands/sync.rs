@@ -5,6 +5,7 @@ use crate::commands::settings::save_setting;
 use crate::sync::{
     body::MAX_IMAGE_BYTES,
     discovery::short_id,
+    protocol::Incompatible,
     runtime::{
         local_addresses, SyncRuntime, DOWNLOAD_DIR_SETTING_KEY, IMAGES_SETTING_KEY, SETTING_KEY,
     },
@@ -34,6 +35,8 @@ pub struct SyncPeer {
     last_addr: Option<String>,
     /// Seen on the network right now (mDNS), for the Send picker.
     is_online: bool,
+    /// Set while this device refuses the peer's frames as incompatible.
+    update_needed: Option<Incompatible>,
 }
 
 #[derive(Serialize)]
@@ -102,6 +105,7 @@ pub fn sync_list_peers(runtime: State<'_, SyncRuntime>) -> Vec<SyncPeer> {
         .into_iter()
         .map(|peer| SyncPeer {
             is_online: runtime.address_of(&peer.id).is_some(),
+            update_needed: service.incompatibility(&peer.id),
             id: peer.id,
             name: peer.name,
             last_addr: peer.last_addr,
