@@ -169,6 +169,13 @@ impl SyncService {
         if is_echo {
             return 0;
         }
+        self.send_clip(clip).await
+    }
+
+    /// Send a clip the user chose to send, like "Paste & Send" on a phone.
+    /// No echo guard: there's no clipboard monitor to echo, and sending back
+    /// what just arrived can be deliberate.
+    pub async fn send_clip(&self, clip: ClipPayload) -> usize {
         self.send_to_peers("text", None, |device_id, key| {
             Ok(Outgoing {
                 frame: Frame::seal_clip(device_id, key, &clip)?,
