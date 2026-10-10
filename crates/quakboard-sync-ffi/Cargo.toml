@@ -7,8 +7,8 @@ publish = false
 
 [lib]
 # lib: Rust tests and the bindgen binary. cdylib: Android, and generating
-# bindings from the built library. staticlib (iOS) comes with Phase 3.
-crate-type = ["lib", "cdylib"]
+# bindings from the built library. staticlib: the iOS XCFramework.
+crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
 # Builds the `uniffi-bindgen` tool that writes the Swift and Kotlin bindings.
