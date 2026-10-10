@@ -1,6 +1,6 @@
 [package]
 name = "quakboard"
-version = "1.5.2"
+version = "1.5.3"
 description = "A Tauri App"
 authors = ["Dereck Angeles"]
 edition = "2021"
