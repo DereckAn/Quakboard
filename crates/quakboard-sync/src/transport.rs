@@ -107,7 +107,7 @@ pub async fn serve(listener: TcpListener, on_connection: ConnectionHandler) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::{ClipPayload, PeerKey};
+    use crate::{ClipPayload, PeerKey};
 
     const KEY: PeerKey = [5; 32];
 

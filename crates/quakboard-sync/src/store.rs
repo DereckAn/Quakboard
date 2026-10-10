@@ -176,7 +176,7 @@ mod key_base64 {
     use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
     use serde::{de, Deserialize, Deserializer, Serializer};
 
-    use crate::sync::PeerKey;
+    use crate::PeerKey;
 
     pub fn serialize<S: Serializer>(key: &PeerKey, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&BASE64.encode(key))

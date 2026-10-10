@@ -70,6 +70,7 @@ spake2 = "0.4"
 getrandom = "0.3"
 mdns-sd = "0.21.4"
 if-addrs = "0.15"
+quakboard-sync = { path = "../crates/quakboard-sync" }
 
 # Test dependencies
 [dev-dependencies]
