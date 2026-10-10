@@ -4,7 +4,14 @@
 //! The listener faces the LAN, so everything it reads is untrusted: frames are
 //! size-capped, reads time out, and concurrent connections are bounded.
 
-use std::{future::Future, io, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    io,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -130,6 +137,19 @@ fn invalid(e: serde_json::Error) -> io::Error {
 
 fn refused(e: Incompatible) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, e)
+}
+
+/// Accept `192.168.1.20` or `192.168.1.20:47823`. IPs only, no hostnames:
+/// looking a name up would leak it to DNS and isn't needed on a LAN.
+pub fn parse_peer_address(input: &str) -> Result<SocketAddr, String> {
+    let input = input.trim();
+    if let Ok(addr) = input.parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+    input
+        .parse::<IpAddr>()
+        .map(|ip| SocketAddr::new(ip, SYNC_PORT))
+        .map_err(|_| format!("\"{input}\" isn't an IP address, like 192.168.1.20"))
 }
 
 pub async fn connect(addr: &str) -> io::Result<TcpStream> {
@@ -345,6 +365,27 @@ mod tests {
             (err.kind(), Incompatible::of(&err)),
             (io::ErrorKind::InvalidData, None)
         );
+    }
+
+    #[test]
+    fn bare_ip_gets_the_sync_port() {
+        assert_eq!(
+            parse_peer_address(" 192.168.1.20 "),
+            Ok("192.168.1.20:47823".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn ip_with_port_is_kept_as_is() {
+        assert_eq!(
+            parse_peer_address("192.168.1.20:5000"),
+            Ok("192.168.1.20:5000".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn hostnames_are_rejected() {
+        assert!(parse_peer_address("my-laptop.local").is_err());
     }
 
     #[tokio::test]

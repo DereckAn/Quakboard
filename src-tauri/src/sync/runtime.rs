@@ -21,7 +21,7 @@ use super::{
     remote_files::store_file_offer,
     service::{ReceivedImage, ReceivedOffer, SyncHooks, SyncService},
     store::{SyncStore, STORE_FILE_NAME},
-    transport::SYNC_PORT,
+    transport::{parse_peer_address, SYNC_PORT},
     ClipPayload,
 };
 use crate::{
@@ -201,19 +201,6 @@ impl SyncRuntime {
         // Dropping the sender makes the waiting pairing end as cancelled.
         lock(&self.pending_code).take();
     }
-}
-
-/// Accept `192.168.1.20` or `192.168.1.20:47823`. IPs only, no hostnames:
-/// looking a name up would leak it to DNS and isn't needed on a LAN.
-pub fn parse_peer_address(input: &str) -> Result<SocketAddr, String> {
-    let input = input.trim();
-    if let Ok(addr) = input.parse::<SocketAddr>() {
-        return Ok(addr);
-    }
-    input
-        .parse::<IpAddr>()
-        .map(|ip| SocketAddr::new(ip, SYNC_PORT))
-        .map_err(|_| format!("\"{input}\" isn't an IP address, like 192.168.1.20"))
 }
 
 /// This device's LAN addresses, to read off and type on the other device.
@@ -402,27 +389,6 @@ mod tests {
     fn submitting_a_code_without_a_pairing_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         assert!(SyncRuntime::new(dir.path()).submit_code("123456".into()).is_err());
-    }
-
-    #[test]
-    fn bare_ip_gets_the_sync_port() {
-        assert_eq!(
-            parse_peer_address(" 192.168.1.20 "),
-            Ok("192.168.1.20:47823".parse().unwrap())
-        );
-    }
-
-    #[test]
-    fn ip_with_port_is_kept_as_is() {
-        assert_eq!(
-            parse_peer_address("192.168.1.20:5000"),
-            Ok("192.168.1.20:5000".parse().unwrap())
-        );
-    }
-
-    #[test]
-    fn hostnames_are_rejected() {
-        assert!(parse_peer_address("my-laptop.local").is_err());
     }
 
     #[test]

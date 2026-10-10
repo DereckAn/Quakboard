@@ -1,6 +1,6 @@
 # Plan: iPhone/iPad and Android apps
 
-**Status:** Phase 1 done on `feat/mobile-version` (see [What was built](#what-was-built-in-phase-1)). Phase 2 is next.
+**Status:** Phases 1 and 2 done (see [Phase 1](#what-was-built-in-phase-1) and [Phase 2](#what-was-built-in-phase-2)). Phase 3, on a Mac, is next.
 
 ## Goal
 Quakboard on iPhone, iPad and later Android, syncing with the desktop app: text, images and files, using the same pairing and encryption.
@@ -157,6 +157,40 @@ pub trait SyncDelegate: Send + Sync {
 - **Tests:** Rust tests drive two `SyncNode`s over localhost (the same scenarios as `service.rs`), plus a generated-bindings smoke test on CI.
 - **Left over from Phase 1:** move `service.rs` into the core behind its hooks, and add the nearby-devices hook (for Bonjour/NSD) that step 3 deferred. `PeerInfo` should carry the in-memory `update_needed` status, so phones show the same "update Quakboard" badge.
 - **Files on phones:** sending a file needs an offer table on the phone too. Phase 5 adds it inside the FFI crate as a small JSON file, since phones don't have the desktop's SQLite history.
+
+### What was built in Phase 2
+Built on `feat/sync-ffi`. Where it differs from the sketch above, this section is what's true.
+
+1. **`service.rs` moved into the core unchanged.** Only its test paths changed. It only reaches the outside world through `SyncHooks`, which is the boundary the FFI layer implements.
+2. **No new discovery hook was needed.** The service only calls `resolve_addr` (when a device's last address fails). The nearby list and "online" status are app state. On the desktop they're in `runtime.rs` (from `Discovery`); on phones they're in `SyncNode`, fed by `set_nearby`.
+3. **`crates/quakboard-sync-ffi`** (UniFFI 0.32.2, proc macros, no `.udl`). It uses the core with `default-features = false`, which is the phone configuration with no `mdns-sd`.
+   - **The runtime:** one Tokio runtime per process, in a `OnceLock`, so a node can be dropped from any thread. Every async call runs there through `run()`. If the caller stops waiting (a cancelled Swift task), the work is aborted; a fetch then deletes its partial file.
+   - **`SyncNode`:**
+     - `new(data_dir, device_name, listen_port, delegate)`; `device_name` is used only on first run
+     - `start` / `stop`, `identity`, `peers` (never keys; includes `is_online` and `update_needed`) and `set_nearby`
+     - `send_text`, `send_image` (PNG bytes; size read from the header) and `set_syncing_images`
+     - `fetch_file(file, dest_dir, progress)`
+     - `pair_with_address`, `pair_with_device`, `submit_pairing_code`, `cancel_pairing`, `set_accepting_pairing` and `unpair`
+   - **`SyncDelegate`:** `on_text`, `on_image(png, width, height, from_name)`, `on_file_offer(RemoteFileInfo)` and `on_pairing_event`. Called on a background thread. **`FetchProgress`:** `on_progress(done, total)`.
+   - **Free functions:** `default_sync_port()`, plus `discovery_service_type()` (`_quakboard._tcp`, the form `NWBrowser` and NSD take) and `discovery_id_key()` (`"id"`), so phones advertise exactly like desktops.
+   - **Errors:** `SyncNodeError` with `Storage`, `Network`, `InvalidInput` and `Fetch`. Each message is ready to show.
+4. **Core additions:**
+   - `send_clip`, which sends without the echo guard. Phones have no clipboard monitor, so every send is deliberate. `broadcast` keeps the guard and calls it.
+   - `image::png_dimensions`.
+   - `parse_peer_address`, moved from the desktop's `runtime.rs` to `transport`.
+5. **Start/stop lifecycle:** `Stopped` → `Starting(token)` → `Running`.
+   - A `stop` during the bind wins, and a second `start` doesn't bind again.
+   - A `start` cancelled mid-bind gives its claim back (`StartClaim`) without undoing a newer start.
+   - A restart right after `stop` retries the bind for up to 0.5 s, while the old socket closes.
+6. **CI:** the FFI crate's tests and clippy (`-D warnings`), plus generating the **Swift and Kotlin** bindings with its `uniffi-bindgen` binary (`--features bindgen`). The generator reads `cargo metadata`, so it runs from the crate's folder.
+
+**Tests:** 30 in the FFI crate. They use the API as Swift will: pairing (right code, wrong code, hostname), text, images, an offer → fetch → verify against a desktop-like owner, progress, the nearby list, and the lifecycle cases. The core has 238 and the desktop 91.
+
+**Left for later:**
+- **The phone's offer table** (sending files from a phone) waits for Phase 5.
+- **`on_text` doesn't say who sent the text.** The core's `apply_clip` hook doesn't carry the sender; add it if the phone UI wants "from Laptop" on text.
+- **Kotlin bindings** are generated in the default `uniffi.quakboard_sync_ffi` package. Set a real package name in a `uniffi.toml` at Phase 6.
+- **`staticlib`** for iOS is added in Phase 3.
 
 ## Phase 3: iOS build pipeline
 1. **Rust targets:** `aarch64-apple-ios` (devices), plus `aarch64-apple-ios-sim` and `x86_64-apple-ios` (simulators).

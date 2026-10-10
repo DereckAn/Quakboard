@@ -5,20 +5,24 @@
 //! converts types and runs the async runtime; the behaviour is the core's.
 
 use std::{
+    collections::HashMap,
     fmt,
+    net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex, OnceLock},
 };
 
 use quakboard_sync::{
     discovery::short_id,
+    fetching::RemoteFile,
+    image::{png_dimensions, ImageDetails},
     protocol::Incompatible,
-    service::{SyncHooks, SyncService},
+    service::{self, ReceivedImage, ReceivedOffer, SyncHooks, SyncService},
     store::{SyncStore, STORE_FILE_NAME},
-    transport::SYNC_PORT,
+    transport::{parse_peer_address, SYNC_PORT},
     ClipPayload,
 };
-use tokio::{net::TcpListener, runtime::Runtime, task::JoinHandle};
+use tokio::{net::TcpListener, runtime::Runtime, sync::oneshot, task::JoinHandle};
 
 uniffi::setup_scaffolding!();
 
@@ -35,6 +39,11 @@ pub enum SyncNodeError {
     Storage(String),
     /// The port couldn't be opened, or the runtime couldn't start.
     Network(String),
+    /// Something the app passed in isn't usable, like a typed address that
+    /// isn't an IP or bytes that aren't a PNG. The message says which.
+    InvalidInput(String),
+    /// A fetch failed; the message is ready to show ("… is offline").
+    Fetch(String),
 }
 
 impl fmt::Display for SyncNodeError {
@@ -42,6 +51,9 @@ impl fmt::Display for SyncNodeError {
         match self {
             SyncNodeError::Storage(reason) => write!(f, "sync storage failed: {reason}"),
             SyncNodeError::Network(reason) => write!(f, "sync network failed: {reason}"),
+            SyncNodeError::InvalidInput(reason) | SyncNodeError::Fetch(reason) => {
+                write!(f, "{reason}")
+            }
         }
     }
 }
@@ -70,8 +82,65 @@ pub struct PeerInfo {
     pub name: String,
     /// Last `ip:port` it was reached at.
     pub last_addr: Option<String>,
+    /// In the latest `set_nearby` list.
+    pub is_online: bool,
     /// Set while its frames are refused as incompatible; not saved.
     pub update_needed: Option<UpdateNeeded>,
+}
+
+/// A Quakboard device seen on the network (Bonjour on iOS, NSD on Android).
+/// Advertise and browse `discovery_service_type()`, and read the device id
+/// from the `discovery_id_key()` TXT entry.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct NearbyDevice {
+    pub id: String,
+    /// An IP, with or without `:port` (the sync port when missing).
+    pub address: String,
+}
+
+/// The Bonjour/NSD service type, `_quakboard._tcp`: what `NWBrowser`,
+/// `NWListener` and Android NSD take (the domain, `local.`, is separate).
+#[uniffi::export]
+pub fn discovery_service_type() -> String {
+    quakboard_sync::discovery::SERVICE_TYPE
+        .trim_end_matches("local.")
+        .trim_end_matches('.')
+        .into()
+}
+
+#[uniffi::export]
+pub fn discovery_id_key() -> String {
+    quakboard_sync::discovery::ID_PROPERTY.into()
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum PairingEvent {
+    /// Another device asked to pair: show this code, to type over there.
+    CodeShown {
+        code: String,
+    },
+    Paired {
+        peer_id: String,
+        name: String,
+    },
+    /// `needs_update`: worth showing even if no pairing screen is open.
+    Failed {
+        reason: String,
+        needs_update: bool,
+    },
+}
+
+/// A file a paired device offered. Hand it back to `fetch_file` unchanged.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct RemoteFileInfo {
+    pub offer_id: String,
+    pub origin_id: String,
+    pub origin_name: String,
+    /// Already made safe to show and to save as.
+    pub name: String,
+    pub size: u64,
+    pub mime: String,
+    pub sha256: String,
 }
 
 /// What the app does when something arrives. Called on a background thread;
@@ -80,13 +149,39 @@ pub struct PeerInfo {
 pub trait SyncDelegate: Send + Sync {
     /// Text a paired device sent.
     fn on_text(&self, text: String);
+    /// An image a paired device sent, already checked to be a safe PNG of
+    /// this size.
+    fn on_image(&self, png: Vec<u8>, width: u32, height: u32, from_name: String);
+    /// A file a paired device offered. Nothing is downloaded until
+    /// `fetch_file`.
+    fn on_file_offer(&self, file: RemoteFileInfo);
+    fn on_pairing_event(&self, event: PairingEvent);
+}
+
+/// Progress of one `fetch_file`, on a background thread.
+#[uniffi::export(with_foreign)]
+pub trait FetchProgress: Send + Sync {
+    fn on_progress(&self, done: u64, total: u64);
+}
+
+/// Whether the node is receiving. `Starting` carries a token, so a start
+/// that `stop` overtook while binding knows not to go live.
+enum Listening {
+    Stopped,
+    Starting(u64),
+    Running(JoinHandle<()>),
 }
 
 #[derive(uniffi::Object)]
 pub struct SyncNode {
     service: Arc<SyncService>,
     listen_port: u16,
-    listener: Mutex<Option<JoinHandle<()>>>,
+    listening: Mutex<Listening>,
+    next_start: Mutex<u64>,
+    /// The latest `set_nearby` list, by device id. Also read by `resolve_addr`.
+    nearby: Arc<Mutex<HashMap<String, SocketAddr>>>,
+    /// Delivers the code the user types to the pairing that waits for it.
+    pending_code: Mutex<Option<oneshot::Sender<String>>>,
 }
 
 #[uniffi::export]
@@ -109,37 +204,39 @@ impl SyncNode {
         }
         .map_err(|e| SyncNodeError::Storage(e.to_string()))?;
 
-        let service = SyncService::new(store, store_path, listen_port, hooks(delegate));
+        let nearby = Arc::new(Mutex::new(HashMap::new()));
+        let hooks = hooks(delegate, Arc::clone(&nearby));
         Ok(Arc::new(SyncNode {
-            service,
+            service: SyncService::new(store, store_path, listen_port, hooks),
             listen_port,
-            listener: Mutex::new(None),
+            listening: Mutex::new(Listening::Stopped),
+            next_start: Mutex::new(0),
+            nearby,
+            pending_code: Mutex::new(None),
         }))
     }
 
-    /// Start receiving from paired devices. Does nothing if already started.
+    /// Start receiving from paired devices. Does nothing if already started
+    /// or starting.
     pub async fn start(&self) -> Result<(), SyncNodeError> {
-        if lock(&self.listener).is_some() {
+        let Some(token) = self.begin_start() else {
             return Ok(());
-        }
+        };
+        // If this future is dropped mid-bind (a cancelled task), give the
+        // claim back; after `finish_start` it's a no-op.
+        let _unclaim = StartClaim { node: self, token };
         let port = self.listen_port;
-        let listener = runtime()?
-            .spawn(async move { TcpListener::bind(("0.0.0.0", port)).await })
-            .await
-            .map_err(|e| SyncNodeError::Network(e.to_string()))?
-            .map_err(|e| SyncNodeError::Network(format!("could not listen on {port}: {e}")))?;
-
-        let mut running = lock(&self.listener);
-        // Another start() may have won while this one was binding.
-        if running.is_none() {
-            *running = Some(runtime()?.spawn(self.service.clone().listen(listener)));
-        }
-        Ok(())
+        let bound = run(bind(port)).await.and_then(|bound| {
+            bound.map_err(|e| SyncNodeError::Network(format!("could not listen on {port}: {e}")))
+        });
+        self.finish_start(token, bound)
     }
 
-    /// Stop receiving. Sending still works.
+    /// Stop receiving, including a `start` still in progress. Sending still
+    /// works.
     pub fn stop(&self) {
-        if let Some(listener) = lock(&self.listener).take() {
+        let previous = std::mem::replace(&mut *lock(&self.listening), Listening::Stopped);
+        if let Listening::Running(listener) = previous {
             listener.abort();
         }
     }
@@ -154,10 +251,12 @@ impl SyncNode {
     }
 
     pub fn peers(&self) -> Vec<PeerInfo> {
+        let nearby = lock(&self.nearby).clone();
         self.service
             .peers()
             .into_iter()
             .map(|peer| PeerInfo {
+                is_online: nearby.contains_key(&peer.id),
                 update_needed: self.service.incompatibility(&peer.id).map(
                     |refusal| match refusal {
                         Incompatible::ThisTooOld => UpdateNeeded::ThisDevice,
@@ -171,21 +270,193 @@ impl SyncNode {
             .collect()
     }
 
+    /// Replace the list of devices seen on the network. Paired devices whose
+    /// address changed are then reached through it.
+    pub fn set_nearby(&self, devices: Vec<NearbyDevice>) {
+        let parsed = devices
+            .into_iter()
+            .filter_map(|device| {
+                let addr = parse_peer_address(&device.address).ok()?;
+                Some((device.id, addr))
+            })
+            .collect();
+        *lock(&self.nearby) = parsed;
+    }
+
     /// Send text to every paired device. Returns how many it reached.
     pub async fn send_text(&self, text: String) -> u32 {
-        let Ok(runtime) = runtime() else {
-            return 0;
-        };
         let service = self.service.clone();
         let clip = ClipPayload {
             text,
             content_type: "text".into(),
         };
-        let reached = runtime
-            .spawn(async move { service.send_clip(clip).await })
+        let reached = run(async move { service.send_clip(clip).await })
             .await
             .unwrap_or(0);
-        u32::try_from(reached).unwrap_or(u32::MAX)
+        count(reached)
+    }
+
+    /// Send a PNG to every paired device. Returns how many it reached: 0 when
+    /// image sync is off or it's over the size limit.
+    pub async fn send_image(&self, png: Vec<u8>) -> Result<u32, SyncNodeError> {
+        let (width, height) =
+            png_dimensions(&png).map_err(|e| SyncNodeError::InvalidInput(e.to_string()))?;
+        let details = ImageDetails {
+            width,
+            height,
+            is_screenshot: false,
+        };
+        let service = self.service.clone();
+        let reached = run(async move { service.broadcast_image(&png, details).await }).await?;
+        Ok(count(reached))
+    }
+
+    /// The "Also sync images" switch; covers sending and receiving. On by
+    /// default.
+    pub fn set_syncing_images(&self, enabled: bool) {
+        self.service.set_syncing_images(enabled);
+    }
+
+    /// Download an offered file into `dest_dir`, verified against its offer.
+    /// Returns where it was saved; never replaces an existing file. If the
+    /// caller stops waiting (a cancelled task), the transfer stops and its
+    /// partial file is deleted.
+    pub async fn fetch_file(
+        &self,
+        file: RemoteFileInfo,
+        dest_dir: String,
+        progress: Arc<dyn FetchProgress>,
+    ) -> Result<String, SyncNodeError> {
+        let service = self.service.clone();
+        let total = file.size;
+        let remote = RemoteFile {
+            offer_id: file.offer_id,
+            origin_id: file.origin_id,
+            origin_name: file.origin_name,
+            name: file.name,
+            size: file.size,
+            sha256: file.sha256,
+        };
+        run(async move {
+            service
+                .fetch_file(&remote, &PathBuf::from(dest_dir), |done| {
+                    progress.on_progress(done, total)
+                })
+                .await
+        })
+        .await?
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(|e| SyncNodeError::Fetch(e.to_string()))
+    }
+
+    /// Answer pairing requests from other devices. Only while a pairing
+    /// screen is open, so nobody on the LAN can pop up a code at other times.
+    pub fn set_accepting_pairing(&self, accepting: bool) {
+        self.service.set_accepting_pairing(accepting);
+    }
+
+    /// Pair with the device at a typed IP (`192.168.1.20`, optional
+    /// `:port`). It shows a code; pass it to `submit_pairing_code`. The
+    /// outcome arrives as a `PairingEvent`.
+    pub fn pair_with_address(&self, address: String) -> Result<(), SyncNodeError> {
+        let addr = parse_peer_address(&address).map_err(SyncNodeError::InvalidInput)?;
+        self.pair_at(addr)
+    }
+
+    /// Pair with a device from the latest `set_nearby` list.
+    pub fn pair_with_device(&self, device_id: String) -> Result<(), SyncNodeError> {
+        let addr = lock(&self.nearby).get(&device_id).copied().ok_or_else(|| {
+            SyncNodeError::InvalidInput("That device is no longer on the network".into())
+        })?;
+        self.pair_at(addr)
+    }
+
+    pub fn submit_pairing_code(&self, code: String) -> Result<(), SyncNodeError> {
+        let code_tx = lock(&self.pending_code).take().ok_or_else(|| {
+            SyncNodeError::InvalidInput("No pairing is waiting for a code".into())
+        })?;
+        code_tx
+            .send(code)
+            .map_err(|_| SyncNodeError::InvalidInput("That pairing already ended".into()))
+    }
+
+    /// Give up on the pairing waiting for a code; it ends as cancelled.
+    pub fn cancel_pairing(&self) {
+        lock(&self.pending_code).take();
+    }
+
+    /// Forget a paired device. Returns whether it was paired.
+    pub fn unpair(&self, peer_id: String) -> Result<bool, SyncNodeError> {
+        self.service
+            .unpair(&peer_id)
+            .map_err(|e| SyncNodeError::Storage(e.to_string()))
+    }
+}
+
+impl SyncNode {
+    /// Claim the start, unless the node is already starting or running.
+    fn begin_start(&self) -> Option<u64> {
+        let mut listening = lock(&self.listening);
+        if !matches!(*listening, Listening::Stopped) {
+            return None;
+        }
+        let mut next = lock(&self.next_start);
+        *next += 1;
+        *listening = Listening::Starting(*next);
+        Some(*next)
+    }
+
+    /// Go live with `bound`, unless `stop` (or a newer start) took over while
+    /// it was binding. Then the socket is just dropped.
+    fn finish_start(
+        &self,
+        token: u64,
+        bound: Result<TcpListener, SyncNodeError>,
+    ) -> Result<(), SyncNodeError> {
+        let mut listening = lock(&self.listening);
+        let is_current = matches!(*listening, Listening::Starting(current) if current == token);
+        match bound {
+            Ok(listener) if is_current => {
+                *listening =
+                    Listening::Running(runtime()?.spawn(self.service.clone().listen(listener)));
+                Ok(())
+            }
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if is_current {
+                    *listening = Listening::Stopped;
+                }
+                Err(e)
+            }
+        }
+    }
+
+    fn pair_at(&self, addr: SocketAddr) -> Result<(), SyncNodeError> {
+        let (code_tx, code_rx) = oneshot::channel();
+        // Replacing an older sender cancels that attempt's code entry.
+        *lock(&self.pending_code) = Some(code_tx);
+        let service = self.service.clone();
+        // The outcome reaches the app through `on_pairing_event`.
+        runtime()?.spawn(async move {
+            let _ = service.pair_with(&addr.to_string(), code_rx).await;
+        });
+        Ok(())
+    }
+}
+
+/// Resets `Starting(token)` to `Stopped` when dropped, unless a newer start
+/// or `finish_start` has moved the node on since.
+struct StartClaim<'a> {
+    node: &'a SyncNode,
+    token: u64,
+}
+
+impl Drop for StartClaim<'_> {
+    fn drop(&mut self) {
+        let mut listening = lock(&self.node.listening);
+        if matches!(*listening, Listening::Starting(current) if current == self.token) {
+            *listening = Listening::Stopped;
+        }
     }
 }
 
@@ -195,17 +466,90 @@ impl Drop for SyncNode {
     }
 }
 
-fn hooks(delegate: Arc<dyn SyncDelegate>) -> SyncHooks {
-    // NOTE: images, file offers, pairing events and the nearby-device lookup
-    // are wired in the next pass of Phase 2, step 3.
+fn hooks(
+    delegate: Arc<dyn SyncDelegate>,
+    nearby: Arc<Mutex<HashMap<String, SocketAddr>>>,
+) -> SyncHooks {
+    let (text_to, image_to, offer_to, pairing_to) = (
+        Arc::clone(&delegate),
+        Arc::clone(&delegate),
+        Arc::clone(&delegate),
+        delegate,
+    );
     SyncHooks {
-        apply_clip: Arc::new(move |clip| delegate.on_text(clip.text)),
-        apply_image: Arc::new(|_| {}),
-        apply_offer: Arc::new(|_| {}),
+        apply_clip: Arc::new(move |clip| text_to.on_text(clip.text)),
+        apply_image: Arc::new(move |image: ReceivedImage| {
+            let (width, height) = (image.meta.width, image.meta.height);
+            image_to.on_image(image.png, width, height, image.from_name);
+        }),
+        apply_offer: Arc::new(move |offer: ReceivedOffer| {
+            offer_to.on_file_offer(RemoteFileInfo {
+                offer_id: offer.info.offer_id,
+                origin_id: offer.from_id,
+                origin_name: offer.from_name,
+                name: offer.info.name,
+                size: offer.info.size,
+                mime: offer.info.mime,
+                sha256: offer.info.sha256,
+            })
+        }),
+        // NOTE: phones don't offer files yet (MOBILE_PLAN Phase 5), so there's
+        // nothing to look up and every fetch from them is refused.
         lookup_offer: Arc::new(|_| None),
-        on_pairing: Arc::new(|_| {}),
-        resolve_addr: Arc::new(|_| None),
+        on_pairing: Arc::new(move |event| {
+            pairing_to.on_pairing_event(match event {
+                service::PairingEvent::CodeShown { code } => PairingEvent::CodeShown { code },
+                service::PairingEvent::Paired { peer_id, name } => {
+                    PairingEvent::Paired { peer_id, name }
+                }
+                service::PairingEvent::Failed {
+                    reason,
+                    needs_update,
+                } => PairingEvent::Failed {
+                    reason,
+                    needs_update,
+                },
+            })
+        }),
+        resolve_addr: Arc::new(move |device_id| lock(&nearby).get(device_id).copied()),
     }
+}
+
+/// Bind the sync port. A `stop` frees the old socket a moment later, on the
+/// runtime, so a quick restart retries briefly instead of failing.
+async fn bind(port: u16) -> std::io::Result<TcpListener> {
+    const RETRIES: u32 = 20;
+    for _ in 0..RETRIES {
+        match TcpListener::bind(("0.0.0.0", port)).await {
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            other => return other,
+        }
+    }
+    TcpListener::bind(("0.0.0.0", port)).await
+}
+
+/// Run `work` on the sync runtime and wait for it, from any executor. If the
+/// waiting future is dropped (a cancelled Swift task), the work is aborted.
+async fn run<T: Send + 'static>(
+    work: impl std::future::Future<Output = T> + Send + 'static,
+) -> Result<T, SyncNodeError> {
+    struct AbortOnDrop<T>(JoinHandle<T>);
+    impl<T> Drop for AbortOnDrop<T> {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+
+    let mut task = AbortOnDrop(runtime()?.spawn(work));
+    (&mut task.0)
+        .await
+        .map_err(|e| SyncNodeError::Network(format!("sync task failed: {e}")))
+}
+
+fn count(reached: usize) -> u32 {
+    u32::try_from(reached).unwrap_or(u32::MAX)
 }
 
 /// One runtime for every node in the process, so a node can be dropped from
@@ -230,26 +574,67 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 mod tests {
     use std::time::Duration;
 
-    use quakboard_sync::store::Peer;
+    use quakboard_sync::{
+        image::encode_png,
+        offers::{hash_file, FileOfferInfo, FileStamp, Offer},
+        store::Peer,
+    };
     use tokio::sync::mpsc;
 
     use super::*;
 
     const A_ID: &str = "11111111-1111-4111-8111-111111111111";
     const B_ID: &str = "22222222-2222-4222-8222-222222222222";
+    const OFFER_ID: &str = "33333333-3333-4333-8333-333333333333";
+    const KEY: [u8; 32] = [9; 32];
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum Event {
+        Text(String),
+        Image {
+            width: u32,
+            height: u32,
+            from_name: String,
+        },
+        Offer(RemoteFileInfo),
+        Pairing(PairingEvent),
+    }
 
     /// A delegate that collects what arrives, as an app would show it.
-    struct Inbox(mpsc::UnboundedSender<String>);
+    struct Inbox(mpsc::UnboundedSender<Event>);
 
     impl SyncDelegate for Inbox {
         fn on_text(&self, text: String) {
-            let _ = self.0.send(text);
+            let _ = self.0.send(Event::Text(text));
+        }
+        fn on_image(&self, _png: Vec<u8>, width: u32, height: u32, from_name: String) {
+            let _ = self.0.send(Event::Image {
+                width,
+                height,
+                from_name,
+            });
+        }
+        fn on_file_offer(&self, file: RemoteFileInfo) {
+            let _ = self.0.send(Event::Offer(file));
+        }
+        fn on_pairing_event(&self, event: PairingEvent) {
+            let _ = self.0.send(Event::Pairing(event));
+        }
+    }
+
+    #[derive(Default)]
+    struct Progress(Mutex<Option<(u64, u64)>>);
+
+    impl FetchProgress for Progress {
+        fn on_progress(&self, done: u64, total: u64) {
+            *lock(&self.0) = Some((done, total));
         }
     }
 
     struct Device {
         node: Arc<SyncNode>,
-        texts: mpsc::UnboundedReceiver<String>,
+        events: mpsc::UnboundedReceiver<Event>,
+        port: u16,
         dir: tempfile::TempDir,
     }
 
@@ -259,10 +644,24 @@ mod tests {
     }
 
     fn open(dir: tempfile::TempDir, name: &str, port: u16) -> Device {
-        let (tx, texts) = mpsc::unbounded_channel();
+        let (tx, events) = mpsc::unbounded_channel();
         let data_dir = dir.path().to_string_lossy().to_string();
         let node = SyncNode::new(data_dir, name.into(), port, Arc::new(Inbox(tx))).unwrap();
-        Device { node, texts, dir }
+        Device {
+            node,
+            events,
+            port,
+            dir,
+        }
+    }
+
+    fn peer(id: &str, port: u16) -> Peer {
+        Peer {
+            id: id.into(),
+            name: "Laptop".into(),
+            key: KEY,
+            last_addr: Some(format!("127.0.0.1:{port}")),
+        }
     }
 
     /// A store as a past pairing with `peer_id` at `peer_port` left it.
@@ -271,39 +670,60 @@ mod tests {
         let store = SyncStore {
             device_id: id.into(),
             device_name: format!("{id} name"),
-            peers: vec![Peer {
-                id: peer_id.into(),
-                name: "Laptop".into(),
-                key: [9; 32],
-                last_addr: Some(format!("127.0.0.1:{peer_port}")),
-            }],
+            peers: vec![peer(peer_id, peer_port)],
         };
         store.save(&dir.path().join(STORE_FILE_NAME)).unwrap();
         dir
     }
 
+    async fn started(device: Device) -> Device {
+        device.node.start().await.unwrap();
+        device
+    }
+
     async fn paired_devices() -> (Device, Device) {
         let (port_a, port_b) = (free_port(), free_port());
-        let a = open(paired_store(A_ID, B_ID, port_b), "a", port_a);
-        let b = open(paired_store(B_ID, A_ID, port_a), "b", port_b);
-        a.node.start().await.unwrap();
-        b.node.start().await.unwrap();
+        let a = started(open(paired_store(A_ID, B_ID, port_b), "a", port_a)).await;
+        let b = started(open(paired_store(B_ID, A_ID, port_a), "b", port_b)).await;
         (a, b)
     }
 
-    async fn next_text(device: &mut Device) -> Option<String> {
-        tokio::time::timeout(Duration::from_secs(2), device.texts.recv())
+    async fn unpaired_devices() -> (Device, Device) {
+        let a = started(open(tempfile::tempdir().unwrap(), "Phone", free_port())).await;
+        let b = started(open(tempfile::tempdir().unwrap(), "Laptop", free_port())).await;
+        b.node.set_accepting_pairing(true);
+        (a, b)
+    }
+
+    async fn next_event(device: &mut Device) -> Option<Event> {
+        tokio::time::timeout(Duration::from_secs(5), device.events.recv())
             .await
             .ok()
             .flatten()
     }
+
+    /// Start pairing `a` with `b` and return the code `b` shows.
+    async fn shown_code(a: &Device, b: &mut Device) -> String {
+        a.node
+            .pair_with_address(format!("127.0.0.1:{}", b.port))
+            .unwrap();
+        match next_event(b).await {
+            Some(Event::Pairing(PairingEvent::CodeShown { code })) => code,
+            other => panic!("expected a code, got {other:?}"),
+        }
+    }
+
+    // ---- text ----
 
     #[tokio::test]
     async fn text_sent_by_one_node_arrives_at_the_other() {
         let (a, mut b) = paired_devices().await;
         a.node.send_text("hello phone".into()).await;
 
-        assert_eq!(next_text(&mut b).await.as_deref(), Some("hello phone"));
+        assert_eq!(
+            next_event(&mut b).await,
+            Some(Event::Text("hello phone".into()))
+        );
     }
 
     #[tokio::test]
@@ -317,10 +737,12 @@ mod tests {
         // Phones only send on purpose, so there's no echo guard to swallow it.
         let (a, mut b) = paired_devices().await;
         a.node.send_text("ping".into()).await;
-        next_text(&mut b).await;
+        next_event(&mut b).await;
 
         assert_eq!(b.node.send_text("ping".into()).await, 1);
     }
+
+    // ---- start and stop ----
 
     #[tokio::test]
     async fn stopped_node_receives_nothing() {
@@ -329,6 +751,72 @@ mod tests {
 
         assert_eq!(a.node.send_text("anyone?".into()).await, 0);
     }
+
+    #[tokio::test]
+    async fn stop_during_start_keeps_the_node_stopped() {
+        let port_b = free_port();
+        let a = started(open(paired_store(A_ID, B_ID, port_b), "a", free_port())).await;
+        let b = open(paired_store(B_ID, A_ID, a.port), "b", port_b);
+        let token = b.node.begin_start().unwrap();
+        b.node.stop();
+        let bound = TcpListener::bind(("0.0.0.0", b.port)).await.unwrap();
+        b.node.finish_start(token, Ok(bound)).unwrap();
+
+        assert_eq!(a.node.send_text("anyone?".into()).await, 0);
+    }
+
+    #[tokio::test]
+    async fn start_cancelled_while_binding_can_start_again() {
+        // A cancelled Swift task drops `start()` mid-bind.
+        let port_b = free_port();
+        let a = started(open(paired_store(A_ID, B_ID, port_b), "a", free_port())).await;
+        let b = open(paired_store(B_ID, A_ID, a.port), "b", port_b);
+        {
+            let mut pending = std::pin::pin!(b.node.start());
+            let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+            assert!(std::future::Future::poll(pending.as_mut(), &mut context).is_pending());
+        }
+        b.node.start().await.unwrap();
+
+        assert_eq!(a.node.send_text("there?".into()).await, 1);
+    }
+
+    #[tokio::test]
+    async fn old_cancelled_start_does_not_undo_a_newer_one() {
+        let port_b = free_port();
+        let a = started(open(paired_store(A_ID, B_ID, port_b), "a", free_port())).await;
+        let b = open(paired_store(B_ID, A_ID, a.port), "b", port_b);
+        let old = b.node.begin_start().unwrap();
+        b.node.stop();
+        let newer = b.node.begin_start().unwrap();
+        drop(StartClaim {
+            node: &b.node,
+            token: old,
+        });
+        let bound = TcpListener::bind(("0.0.0.0", port_b)).await.unwrap();
+        b.node.finish_start(newer, Ok(bound)).unwrap();
+
+        assert_eq!(a.node.send_text("still here?".into()).await, 1);
+    }
+
+    #[tokio::test]
+    async fn restart_right_after_stop_receives_again() {
+        let (a, b) = paired_devices().await;
+        b.node.stop();
+        b.node.start().await.unwrap();
+
+        assert_eq!(a.node.send_text("back?".into()).await, 1);
+    }
+
+    #[test]
+    fn start_while_starting_does_not_bind_again() {
+        let device = open(tempfile::tempdir().unwrap(), "a", free_port());
+        device.node.begin_start();
+
+        assert_eq!(device.node.begin_start(), None);
+    }
+
+    // ---- identity and peers ----
 
     #[test]
     fn first_run_uses_the_given_device_name() {
@@ -354,6 +842,7 @@ mod tests {
                 id: B_ID.into(),
                 name: "Laptop".into(),
                 last_addr: Some("127.0.0.1:4000".into()),
+                is_online: false,
                 update_needed: None,
             }]
         );
@@ -363,5 +852,277 @@ mod tests {
     fn short_id_is_the_last_four_characters_of_the_id() {
         let device = open(paired_store(A_ID, B_ID, 4000), "a", free_port());
         assert_eq!(device.node.identity().short_id, "1111");
+    }
+
+    #[test]
+    fn unpaired_device_is_no_longer_listed() {
+        let device = open(paired_store(A_ID, B_ID, 4000), "a", free_port());
+        device.node.unpair(B_ID.into()).unwrap();
+
+        assert!(device.node.peers().is_empty());
+    }
+
+    // ---- nearby devices ----
+
+    #[test]
+    fn service_type_is_in_bonjour_form() {
+        assert_eq!(discovery_service_type(), "_quakboard._tcp");
+    }
+
+    #[test]
+    fn nearby_paired_device_is_online() {
+        let device = open(paired_store(A_ID, B_ID, 4000), "a", free_port());
+        device.node.set_nearby(vec![NearbyDevice {
+            id: B_ID.into(),
+            address: "127.0.0.1:4000".into(),
+        }]);
+
+        assert!(device.node.peers()[0].is_online);
+    }
+
+    #[tokio::test]
+    async fn device_that_moved_is_reached_through_the_nearby_list() {
+        let port_b = free_port();
+        let stale = free_port();
+        let a = started(open(paired_store(A_ID, B_ID, stale), "a", free_port())).await;
+        let _b = started(open(paired_store(B_ID, A_ID, a.port), "b", port_b)).await;
+        a.node.set_nearby(vec![NearbyDevice {
+            id: B_ID.into(),
+            address: format!("127.0.0.1:{port_b}"),
+        }]);
+
+        assert_eq!(a.node.send_text("found you".into()).await, 1);
+    }
+
+    // ---- pairing ----
+
+    #[tokio::test]
+    async fn pairing_by_address_shows_a_code_on_the_other_device() {
+        let (a, mut b) = unpaired_devices().await;
+        let code = shown_code(&a, &mut b).await;
+
+        assert_eq!(code.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn right_code_pairs_the_devices() {
+        let (mut a, mut b) = unpaired_devices().await;
+        let code = shown_code(&a, &mut b).await;
+        a.node.submit_pairing_code(code).unwrap();
+
+        assert_eq!(
+            next_event(&mut a).await,
+            Some(Event::Pairing(PairingEvent::Paired {
+                peer_id: b.node.identity().id,
+                name: "Laptop".into(),
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn paired_devices_can_send_text_right_away() {
+        let (mut a, mut b) = unpaired_devices().await;
+        let code = shown_code(&a, &mut b).await;
+        a.node.submit_pairing_code(code).unwrap();
+        next_event(&mut a).await;
+        next_event(&mut b).await;
+
+        assert_eq!(a.node.send_text("hi".into()).await, 1);
+    }
+
+    #[tokio::test]
+    async fn wrong_code_fails_the_pairing() {
+        let (mut a, mut b) = unpaired_devices().await;
+        let code = shown_code(&a, &mut b).await;
+        let wrong = if code == "000000" { "000001" } else { "000000" };
+        a.node.submit_pairing_code(wrong.into()).unwrap();
+
+        assert!(matches!(
+            next_event(&mut a).await,
+            Some(Event::Pairing(PairingEvent::Failed { .. }))
+        ));
+    }
+
+    #[test]
+    fn submitting_a_code_with_no_pairing_is_an_error() {
+        let device = open(tempfile::tempdir().unwrap(), "a", free_port());
+        assert!(matches!(
+            device.node.submit_pairing_code("123456".into()),
+            Err(SyncNodeError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn pairing_with_a_hostname_is_refused() {
+        let device = open(tempfile::tempdir().unwrap(), "a", free_port());
+        assert!(matches!(
+            device.node.pair_with_address("my-laptop.local".into()),
+            Err(SyncNodeError::InvalidInput(_))
+        ));
+    }
+
+    // ---- images ----
+
+    fn png() -> Vec<u8> {
+        encode_png(3, 2, &[200; 3 * 2 * 4]).unwrap()
+    }
+
+    #[tokio::test]
+    async fn image_arrives_with_its_size_and_sender() {
+        let (a, mut b) = paired_devices().await;
+        a.node.send_image(png()).await.unwrap();
+
+        assert_eq!(
+            next_event(&mut b).await,
+            Some(Event::Image {
+                width: 3,
+                height: 2,
+                from_name: "Laptop".into(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn bytes_that_are_not_a_png_are_refused() {
+        let (a, _b) = paired_devices().await;
+        assert!(matches!(
+            a.node.send_image(b"not a png".to_vec()).await,
+            Err(SyncNodeError::InvalidInput(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn no_image_is_sent_while_image_sync_is_off() {
+        let (a, _b) = paired_devices().await;
+        a.node.set_syncing_images(false);
+
+        assert_eq!(a.node.send_image(png()).await.unwrap(), 0);
+    }
+
+    // ---- files ----
+
+    /// A desktop-like owner that shares `content` with the phone `node_id`.
+    async fn owner_sharing(
+        content: &[u8],
+        node_id: &str,
+        node_port: u16,
+    ) -> (Arc<SyncService>, u16, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.pdf");
+        std::fs::write(&path, content).unwrap();
+        let hashed = hash_file(&path, |_, _| {}).unwrap();
+        let offer = Offer {
+            offer_id: OFFER_ID.into(),
+            item_id: "item".into(),
+            path: path.clone(),
+            stamp: FileStamp::of(&path).unwrap(),
+            sha256: hashed.sha256,
+            offered_to: vec![node_id.into()],
+            created_at: String::new(),
+        };
+        let store = SyncStore {
+            device_id: B_ID.into(),
+            device_name: "Laptop".into(),
+            peers: vec![peer(node_id, node_port)],
+        };
+        let hooks = SyncHooks {
+            apply_clip: Arc::new(|_| {}),
+            apply_image: Arc::new(|_| {}),
+            apply_offer: Arc::new(|_| {}),
+            lookup_offer: Arc::new(move |id| (id == OFFER_ID).then(|| offer.clone())),
+            on_pairing: Arc::new(|_| {}),
+            resolve_addr: Arc::new(|_| None),
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let service = SyncService::new(store, dir.path().join(STORE_FILE_NAME), port, hooks);
+        tokio::spawn(service.clone().listen(listener));
+        (service, port, dir)
+    }
+
+    async fn offered_file(content: &[u8]) -> (Device, RemoteFileInfo, tempfile::TempDir) {
+        let node_port = free_port();
+        let (owner, owner_port, owner_dir) = owner_sharing(content, A_ID, node_port).await;
+        let mut phone = started(open(
+            paired_store(A_ID, B_ID, owner_port),
+            "phone",
+            node_port,
+        ))
+        .await;
+        let info = FileOfferInfo {
+            offer_id: OFFER_ID.into(),
+            name: "report.pdf".into(),
+            size: content.len() as u64,
+            mime: "application/pdf".into(),
+            sha256: hash_file(&owner_dir.path().join("report.pdf"), |_, _| {})
+                .unwrap()
+                .sha256,
+        };
+        owner.send_offer(&info, &[A_ID.into()]).await;
+        let Some(Event::Offer(file)) = next_event(&mut phone).await else {
+            panic!("expected a file offer");
+        };
+        (phone, file, owner_dir)
+    }
+
+    #[tokio::test]
+    async fn file_offer_names_the_device_that_has_it() {
+        let (_phone, file, _owner) = offered_file(b"quarterly numbers").await;
+        assert_eq!(file.origin_name, "Laptop");
+    }
+
+    #[tokio::test]
+    async fn offered_file_is_fetched_intact() {
+        let (phone, file, _owner) = offered_file(b"quarterly numbers").await;
+        let downloads = tempfile::tempdir().unwrap();
+        let saved = phone
+            .node
+            .fetch_file(
+                file,
+                downloads.path().to_string_lossy().to_string(),
+                Arc::new(Progress::default()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(saved).unwrap(), b"quarterly numbers");
+    }
+
+    #[tokio::test]
+    async fn fetch_reports_progress_up_to_the_size() {
+        let (phone, file, _owner) = offered_file(b"quarterly numbers").await;
+        let downloads = tempfile::tempdir().unwrap();
+        let progress = Arc::new(Progress::default());
+        phone
+            .node
+            .fetch_file(
+                file,
+                downloads.path().to_string_lossy().to_string(),
+                progress.clone(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(*lock(&progress.0), Some((17, 17)));
+    }
+
+    #[tokio::test]
+    async fn fetch_from_an_unpaired_device_fails_with_a_message() {
+        let (phone, file, _owner) = offered_file(b"quarterly numbers").await;
+        let stranger = RemoteFileInfo {
+            origin_id: "44444444-4444-4444-8444-444444444444".into(),
+            ..file
+        };
+        let downloads = tempfile::tempdir().unwrap();
+        let result = phone
+            .node
+            .fetch_file(
+                stranger,
+                downloads.path().to_string_lossy().to_string(),
+                Arc::new(Progress::default()),
+            )
+            .await;
+
+        assert!(matches!(result, Err(SyncNodeError::Fetch(_))));
     }
 }

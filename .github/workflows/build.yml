@@ -102,6 +102,30 @@ jobs:
           cargo clippy --manifest-path crates/quakboard-sync/Cargo.toml --all-targets -- -D warnings
           cargo clippy --manifest-path crates/quakboard-sync/Cargo.toml --all-targets --no-default-features -- -D warnings
 
+      # The layer the phone apps call (UniFFI). Runs from its own folder:
+      # uniffi-bindgen reads `cargo metadata` from the current directory.
+      - name: Sync FFI tests and lint
+        working-directory: crates/quakboard-sync-ffi
+        env:
+          CARGO_TARGET_DIR: ../../src-tauri/target
+        run: |
+          cargo test
+          cargo clippy --all-targets -- -D warnings
+
+      # Proves the exported API still converts to Swift and Kotlin. The
+      # generated files aren't kept; the iOS build makes its own (Phase 3).
+      - name: Generate phone bindings
+        working-directory: crates/quakboard-sync-ffi
+        env:
+          CARGO_TARGET_DIR: ../../src-tauri/target
+        run: |
+          cargo build
+          for language in swift kotlin; do
+            cargo run --features bindgen --bin uniffi-bindgen -- generate \
+              --library ../../src-tauri/target/debug/libquakboard_sync_ffi.so \
+              --language "$language" --out-dir "$RUNNER_TEMP/bindings/$language"
+          done
+
   build-frontend:
     name: Build frontend bundle
     needs: tests
