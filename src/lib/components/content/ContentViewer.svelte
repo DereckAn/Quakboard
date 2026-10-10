@@ -47,6 +47,9 @@
   const isImage = $derived(item?.contentType === "image");
   const isFile = $derived(item?.contentType === "file");
   let isSendOpen = $state(false);
+  // Same look as CopyButton, for the actions next to it.
+  const ACTION_BUTTON =
+    "px-4 py-1 bg-gray-700 text-white rounded-lg text-sm hover:bg-gray-800 transition-colors flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-default";
   const safeSvg = $derived.by(() => {
     if (!isSvg || !item?.contentText) return "";
     return normalizeSvgSize(sanitizeSvg(item.contentText));
@@ -222,6 +225,62 @@
     }
   };
 </script>
+
+<!-- Copy, Open and Send for an item backed by a file on this device. -->
+{#snippet fileActions(target: ClipboardItem, copiesImage: boolean)}
+  <div class="flex flex-wrap w-full gap-2">
+    {#if copiesImage}
+      <CopyButton
+        onclick={() => handleCopy("")}
+        {copied}
+        label="Copy image to clipboard"
+        class="flex-1 whitespace-nowrap"
+      />
+    {:else}
+      <CopyButton
+        onclick={() => handleCopyFile()}
+        {copied}
+        label="Copy file to clipboard"
+        class="flex-1 whitespace-nowrap"
+        disabled={!fileExists}
+      />
+    {/if}
+    <button
+      type="button"
+      class={cn(ACTION_BUTTON, "flex-1 whitespace-nowrap")}
+      onclick={() => handleOpenFile()}
+      disabled={!fileExists}
+    >
+      <Icon name="externalLink" size={18} class="text-white" />
+      <span>Open file</span>
+    </button>
+    <button
+      type="button"
+      class={cn(ACTION_BUTTON, "flex-1 whitespace-nowrap")}
+      onclick={() => (isSendOpen = true)}
+      disabled={!fileExists}
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 20 20"
+        width="18"
+        height="18"
+        aria-hidden="true"
+        ><path
+          fill="currentColor"
+          d="M12 11.874v4.357l7-6.69l-7-6.572v3.983c-8.775 0-11 9.732-11 9.732c2.484-4.388 6.237-4.81 11-4.81"
+        /></svg
+      >
+      <span>Send</span>
+    </button>
+  </div>
+  <SendFilePicker
+    isOpen={isSendOpen}
+    itemId={target.id}
+    fileName={target.fileName ?? target.contentText ?? "file"}
+    onClose={() => (isSendOpen = false)}
+  />
+{/snippet}
 
 <div class={cn("flex-1 overflow-y-auto flex flex-col", className)}>
   {#if !item}
@@ -440,12 +499,18 @@
         {/if}
       </div>
       <div class="px-3 pb-6">
-        <CopyButton
-          onclick={() => handleCopy("")}
-          {copied}
-          label="Copy image to clipboard"
-          class="w-full"
-        />
+        {#if isExternalImage}
+          <!-- An image file copied in a file manager doesn't sync on its own;
+               share it like any other file. -->
+          {@render fileActions(item, true)}
+        {:else}
+          <CopyButton
+            onclick={() => handleCopy("")}
+            {copied}
+            label="Copy image to clipboard"
+            class="w-full"
+          />
+        {/if}
       </div>
       <div class="h-44 mx-3 mb-3 bg-transparent"></div>
     </div>
@@ -494,47 +559,9 @@
             <Icon name="file" size={70} class="text-primary" />
           </div>
         {/if}
-        <div class="flex flex-row w-full gap-2 p-2">
-          <Button
-            onclick={() => handleOpenFile()}
-            disabled={!fileExists}
-            class=""
-          >
-            Open file
-          </Button>
-          <Button
-            variant="outline"
-            onclick={() => handleCopyFile()}
-            disabled={!fileExists}
-          >
-            <Icon name={"copy"} size={18} class="text-white mr-2 flex-1" />
-            Copy file to clipboard
-          </Button>
-          <Button
-            variant="outline"
-            onclick={() => (isSendOpen = true)}
-            disabled={!fileExists}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              width="1.1em"
-              height="1.1em"
-              aria-hidden="true"
-              ><path
-                fill="currentColor"
-                d="M12 11.874v4.357l7-6.69l-7-6.572v3.983c-8.775 0-11 9.732-11 9.732c2.484-4.388 6.237-4.81 11-4.81"
-              /></svg
-            >
-            Send
-          </Button>
+        <div class="w-full p-2">
+          {@render fileActions(item, false)}
         </div>
-        <SendFilePicker
-          isOpen={isSendOpen}
-          itemId={item.id}
-          fileName={item.fileName ?? item.contentText ?? "file"}
-          onClose={() => (isSendOpen = false)}
-        />
       </div>
       <div class="h-44 mx-3 mb-3 bg-transparent"></div>
     </div>

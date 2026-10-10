@@ -513,44 +513,12 @@ impl ClipboardMonitor {
 
                             match store_prepared_file(&prepared, &file_path, &self.files_dir) {
                                 Ok(info) => {
-                                    let is_textual = is_textual_mime(
+                                    let preview = file_preview_metadata(
+                                        &info.full_path,
                                         &info.file_mime_type,
                                         info.original_extension.as_ref(),
+                                        &self.file_thumbs_dir,
                                     );
-                                    let mut thumbnail_path: Option<String> = None;
-                                    let mut text_preview: Option<String> = None;
-                                    let mut preview_language: Option<String> = None;
-
-                                    if is_textual {
-                                        match extract_text_preview(&info.full_path, 32_768) {
-                                            Ok(preview_text) => {
-                                                preview_language =
-                                                    detect_code_language(&preview_text);
-                                                text_preview = Some(preview_text);
-                                            }
-                                            Err(err) => eprintln!(
-                                                "Failed to read text preview for {}: {}",
-                                                info.file_name, err
-                                            ),
-                                        }
-                                    } else {
-                                        match generate_document_thumbnail(
-                                            &info.full_path,
-                                            &self.file_thumbs_dir,
-                                        ) {
-                                            Ok(result) => {
-                                                thumbnail_path = result
-                                                    .map(|path| path.to_string_lossy().to_string());
-                                            }
-                                            Err(err) => {
-                                                eprintln!(
-                                                    "Failed to generate document thumbnail: {}",
-                                                    err
-                                                );
-                                            }
-                                        }
-                                    }
-
                                     let mut metadata = serde_json::json!({
                                         "source": "file",
                                         "original_extension": info.original_extension,
@@ -560,36 +528,8 @@ impl ClipboardMonitor {
                                             .to_string_lossy(),
                                         "external_missing": false,
                                     });
-
                                     if let Some(obj) = metadata.as_object_mut() {
-                                        if let Some(path) = thumbnail_path {
-                                            obj.insert(
-                                                "preview_type".to_string(),
-                                                serde_json::Value::String("image".to_string()),
-                                            );
-                                            obj.insert(
-                                                "thumbnail_path".to_string(),
-                                                serde_json::Value::String(path),
-                                            );
-                                        }
-
-                                        if let Some(preview) = text_preview {
-                                            obj.insert(
-                                                "preview_type".to_string(),
-                                                serde_json::Value::String("text".to_string()),
-                                            );
-                                            obj.insert(
-                                                "text_preview".to_string(),
-                                                serde_json::Value::String(preview),
-                                            );
-
-                                            if let Some(lang) = preview_language {
-                                                obj.insert(
-                                                    "preview_language".to_string(),
-                                                    serde_json::Value::String(lang),
-                                                );
-                                            }
-                                        }
+                                        obj.extend(preview);
                                     }
 
                                     let dto = CreateClipboardItemDto {
@@ -638,6 +578,42 @@ impl ClipboardMonitor {
             }
         }
     }
+}
+
+/// Preview fields for a file item's metadata: a thumbnail, or the start of
+/// a textual file. Empty when neither can be made.
+pub(crate) fn file_preview_metadata(
+    path: &std::path::Path,
+    mime: &str,
+    extension: Option<&String>,
+    thumbs_dir: &std::path::Path,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut preview = serde_json::Map::new();
+    if is_textual_mime(mime, extension) {
+        match extract_text_preview(path, 32_768) {
+            Ok(text) => {
+                if let Some(lang) = detect_code_language(&text) {
+                    preview.insert("preview_language".into(), lang.into());
+                }
+                preview.insert("preview_type".into(), "text".into());
+                preview.insert("text_preview".into(), text.into());
+            }
+            Err(err) => eprintln!("Failed to read text preview for {}: {}", path.display(), err),
+        }
+    } else {
+        match generate_document_thumbnail(path, thumbs_dir) {
+            Ok(Some(thumb)) => {
+                preview.insert("preview_type".into(), "image".into());
+                preview.insert(
+                    "thumbnail_path".into(),
+                    thumb.to_string_lossy().to_string().into(),
+                );
+            }
+            Ok(None) => {}
+            Err(err) => eprintln!("Failed to generate document thumbnail: {}", err),
+        }
+    }
+    preview
 }
 
 fn is_textual_mime(mime: &str, extension: Option<&String>) -> bool {
@@ -697,7 +673,13 @@ fn is_textual_mime(mime: &str, extension: Option<&String>) -> bool {
 }
 
 fn extract_text_preview(path: &std::path::Path, max_bytes: usize) -> Result<String, String> {
-    let data = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
+    use std::io::Read;
+
+    // One byte past the limit, to know whether to mark the text as cut.
+    let mut data = Vec::new();
+    fs::File::open(path)
+        .and_then(|file| file.take(max_bytes as u64 + 1).read_to_end(&mut data))
+        .map_err(|e| format!("Failed to read file: {}", e))?;
     let take = std::cmp::min(max_bytes, data.len());
     let mut text = String::from_utf8_lossy(&data[..take]).to_string();
     text = text.trim_start_matches('\u{feff}').to_string(); // drop BOM if present
@@ -773,6 +755,25 @@ fn is_repeat_image_event(last: Option<&SeenImage>, hash: &[u8], now: Instant) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_file_preview_is_its_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "hello there").unwrap();
+        let preview = file_preview_metadata(&path, "text/plain", None, dir.path());
+
+        assert_eq!(preview["text_preview"], "hello there");
+    }
+
+    #[test]
+    fn long_text_preview_is_cut_and_marked() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.log");
+        std::fs::write(&path, "a".repeat(100)).unwrap();
+
+        assert_eq!(extract_text_preview(&path, 10).unwrap(), format!("{}\n…", "a".repeat(10)));
+    }
 
     #[test]
     fn same_image_within_the_window_is_a_repeat_event() {

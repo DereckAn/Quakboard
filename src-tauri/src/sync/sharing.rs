@@ -19,7 +19,7 @@ use super::{
     runtime::{SyncRuntime, DOWNLOAD_DIR_SETTING_KEY},
 };
 use crate::{
-    clipboard::operations::write_file_list,
+    clipboard::{monitor::file_preview_metadata, operations::write_file_list},
     commands::AppState,
     db::{models::ClipboardItem, repository::ClipboardRepository},
 };
@@ -175,6 +175,16 @@ pub fn cancel_fetch(app: &AppHandle, runtime: &SyncRuntime, item_id: &str) {
 /// Turn the remote item into a normal local file item and put the file on
 /// the clipboard, as copying it on the other device would have.
 fn finish_fetch(app: &AppHandle, item_id: &str, remote: &RemoteFile, path: &Path) -> Result<(), String> {
+    // The same preview a file copied on this device gets.
+    let thumbs_dir = {
+        let state = app.state::<Mutex<AppState>>();
+        let state = lock(&state);
+        PathBuf::from(&state.app_data_dir).join("file_thumbnails")
+    };
+    let mime = mime_guess::from_path(path).first_or_octet_stream().to_string();
+    let extension = path.extension().map(|e| e.to_string_lossy().to_string());
+    let preview = file_preview_metadata(path, &mime, extension.as_ref(), &thumbs_dir);
+
     let item = with_repo(app, |repo| {
         let item = repo
             .get_item(item_id)
@@ -189,7 +199,11 @@ fn finish_fetch(app: &AppHandle, item_id: &str, remote: &RemoteFile, path: &Path
         // Keeps the full SHA-256: the same file offered again is recognized.
         repo.update_file_info(item_id, &path_text, &name, remote.size as i64, &mime, Some(&remote.sha256))
             .map_err(|e| e.to_string())?;
-        repo.update_metadata(item_id, &fetched_metadata(&item, remote, &path_text).to_string())
+        let mut metadata = fetched_metadata(&item, remote, &path_text);
+        if let Some(object) = metadata.as_object_mut() {
+            object.extend(preview);
+        }
+        repo.update_metadata(item_id, &metadata.to_string())
             .map_err(|e| e.to_string())?;
         repo.get_item(item_id)
             .map_err(|e| e.to_string())?

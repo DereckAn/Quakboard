@@ -89,6 +89,24 @@ pub fn run() {
             #[cfg(debug_assertions)]
             app.get_webview_window("main").unwrap().open_devtools();
 
+            // HACK(dereck): WebKitGTK 2.54 refuses asset:// images on a page
+            // from another origin. Only `tauri dev` hits it: its page comes
+            // from http://localhost:1420, while release builds load from
+            // tauri://. Remove this block and the `webkit2gtk` line in
+            // Cargo.toml once Tauri allows it itself; check with `tauri dev`
+            // that images still show
+            // (https://github.com/tauri-apps/tauri/issues/16201).
+            #[cfg(all(target_os = "linux", debug_assertions))]
+            {
+                use webkit2gtk::WebViewExt;
+                let window = app.get_webview_window("main").unwrap();
+                if let Err(e) = window.with_webview(|webview| {
+                    webview.inner().set_cors_allowlist(&["asset://*/*"]);
+                }) {
+                    eprintln!("Failed to allow asset:// images in dev: {e}");
+                }
+            }
+
             // ================================================================
             // CONFIGURACIÓN DEL SYSTEM TRAY
             // ================================================================

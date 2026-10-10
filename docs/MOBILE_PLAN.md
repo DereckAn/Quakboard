@@ -1,6 +1,6 @@
 # Plan: iPhone/iPad and Android apps
 
-**Status:** planned, nothing built yet.
+**Status:** Phase 1 done on `feat/mobile-version` (see [What was built](#what-was-built-in-phase-1)). Phase 2 is next.
 
 ## Goal
 Quakboard on iPhone, iPad and later Android, syncing with the desktop app: text, images and files, using the same pairing and encryption.
@@ -23,7 +23,7 @@ Quakboard on iPhone, iPad and later Android, syncing with the desktop app: text,
 - **Native UIs:** SwiftUI on iOS, then Jetpack Compose on Android. On a phone, the app is mostly operating-system integration (share sheet, clipboard rules, local-network permission, background limits). Native code does that directly, and the UI itself is small.
 - **UniFFI** (Mozilla) generates the Swift and Kotlin bindings from the Rust API, so the apps call `pair()`, `sendText()`, `fetchFile()` as ordinary native functions.
 
-## What the code looks like today (measured)
+## What the code looked like before Phase 1 (measured)
 | Module | Lines | Depends on | Goes to |
 |---|---|---|---|
 | `mod.rs` (Frame, Sealed), `body`, `transport`, `stream`, `pairing`, `store` | ~1,930 | nothing app-specific | **core** |
@@ -68,6 +68,52 @@ The goal is a Cargo workspace with `quakboard-sync`, which knows nothing about T
 
 **Done when** the desktop works exactly as before (same manual smoke test as image test 1 and file test 1) and the core builds with `--no-default-features`.
 
+### What was built in Phase 1
+Where the result differs from the steps above, this section is what's true.
+
+1. **A path dependency, not a workspace.** `crates/quakboard-sync` is listed in `src-tauri/Cargo.toml` as `path = "../crates/quakboard-sync"`. This keeps `src-tauri/target`, its lockfile and the CI artifact paths unchanged. The core has its own `Cargo.lock`. Moving to a workspace later is optional.
+2. **What's in the core:** `lib.rs` (`Frame`, `Sealed`, `ClipPayload`, `PeerKey`, `SyncError`), `body`, `discovery`, `fetch`, `fetching`, `image`, `offers`, `pairing`, `protocol`, `remote_files`, `store`, `stream` and `transport`. The desktop's `sync/mod.rs` re-exports them, so desktop code still uses `crate::sync::…`.
+   - **Moved whole:** `fetch.rs`, since everything it needs moved too. `fetching.rs` also moved, except `RemoteFile::of`, which became `remote_files::remote_file_of` on the desktop next to the code that writes that metadata. The desktop `fetching.rs` is gone.
+   - **Still on the desktop:** `service.rs` and `runtime.rs`, plus `received.rs`, `sharing.rs`, and the SQL halves of `offers.rs` and `remote_files.rs`. **`service.rs` moves in Phase 2,** where it gets the FFI's hooks.
+   - **One cross-crate test changed:** `image.rs` compared against the desktop's `calculate_file_hash`. Both sides now pin the SHA-256 of `"hello world"` instead.
+3. **The `mdns` feature** (on by default) covers only the mDNS daemon. These stay available without it, so the phone apps advertise in a way the desktop recognizes:
+   - `SERVICE_TYPE` (`_quakboard._tcp.local.`)
+   - `ID_PROPERTY` (the `"id"` TXT key, now public)
+   - `DiscoveredDevice`
+   - `short_id`
+
+   **Deferred to Phase 2:** the "list nearby devices" hook. Nothing can use it until `service.rs` is in the core.
+4. **Protocol version: a stamp on every frame, not just pairing.**
+   - **The stamp:** `write_frame` adds `"protocol": {"version", "min_peer"}` to every frame (`protocol.rs`, `Protocol::CURRENT` = 1/1). A frame without it is from v1.5.x and reads as version 1. Older devices ignore the extra key; a test parses a stamped frame as an old device would.
+   - **Checking order:** `read_frame` checks compatibility **before** parsing, because a newer device's frame may not parse at all. It fails with an `Incompatible` (`PeerTooOld` or `ThisTooOld`) inside the error, so a fetch says "the other device needs a newer Quakboard; update this one".
+   - **The listener's first frame:** `read_stamped` returns `Incoming::Frame(frame, protocol)` unjudged, so pairing can still answer. If the frame doesn't parse, it returns `Incoming::Incompatible { sender, reason }`, keeping the claimed `from`.
+   - **Pairing:** the responder sends its challenge **before** refusing, so the initiator also learns why. The initiator refuses as soon as it reads the challenge, before anyone types a code. The UI's `failed` event has `needsUpdate`, and Devices shows it even when no dialog was open.
+   - **Paired devices:** an incompatible frame is dropped and never interpreted. The peer row shows "Not syncing: update Quakboard on …" (`updateNeeded` from `sync_list_peers`).
+   - **Security:** the stamp travels outside the encryption, so anyone on the LAN can forge it. The badge is therefore kept **in memory only, never saved**, and only for ids that are already paired. A forged stamp can drop that one frame or show a badge until the next real frame, but it can't stop sync with a device.
+   - **One limit:** an unparseable first frame with no `from` can't be tied to a device, so it's only logged.
+5. **CI:** the `tests` job runs, for the core:
+   - `cargo test`, with default features and with `--no-default-features`
+   - `cargo clippy --all-targets -- -D warnings` in both configurations
+
+   These steps share `src-tauri/target`.
+
+**Tests:** 167 in the core (158 with `--no-default-features`) and 160 on the desktop; there were 303 before Phase 1.
+
+**Manual smoke test (Linux ↔ Mac, both on this branch):**
+
+| # | Test | Result |
+|---|---|---|
+| 1 | Pair again | ✅ |
+| 2 | Text both ways | ✅ |
+| 3 | Screenshots, Linux → Mac and Mac → Linux | ✅ |
+| 4 | Send and Fetch a file, including an image file | ✅ |
+| 5 | A paired v1.5.2 desktop against this branch | not run; covered by `older_devices_can_still_read_a_stamped_frame` |
+
+**Found and fixed during the smoke test (desktop only, not mobile work):**
+- **WebKitGTK 2.54 blocks `asset://` images in `tauri dev` on Linux.** The page comes from `http://localhost:1420`, a different origin. A debug-only CORS allowlist in `lib.rs` works around it. It's marked `HACK(dereck)` (in `lib.rs` and `Cargo.toml`); remove it once [tauri#16201](https://github.com/tauri-apps/tauri/issues/16201) is fixed. Release builds aren't affected.
+- **Image files copied in a file manager** now have Copy image, Open file and Send, styled like the other copy buttons. The "Also sync images" text says these files aren't sent automatically.
+- **Fetched files** now get the same preview (thumbnail or text excerpt) as files copied locally.
+
 ## Phase 2: the FFI layer (`quakboard-sync-ffi`)
 A thin crate exposing a small, stable API through UniFFI. The core stays idiomatic Rust, and only this layer deals with FFI types.
 
@@ -107,6 +153,7 @@ pub trait SyncDelegate: Send + Sync {
 - **The async runtime:** the FFI crate owns a Tokio runtime. UniFFI's async support maps `async fn` to Swift `async` and Kotlin `suspend`.
 - **Errors:** one `SyncError` enum with user-facing messages, the same ones the desktop already shows ("offline", "the file changed on the other device", …).
 - **Tests:** Rust tests drive two `SyncNode`s over localhost (the same scenarios as `service.rs`), plus a generated-bindings smoke test on CI.
+- **Left over from Phase 1:** move `service.rs` into the core behind its hooks, and add the nearby-devices hook (for Bonjour/NSD) that step 3 deferred. `PeerInfo` should carry the in-memory `update_needed` status, so phones show the same "update Quakboard" badge.
 - **Files on phones:** sending a file needs an offer table on the phone too. Phase 5 adds it inside the FFI crate as a small JSON file, since phones don't have the desktop's SQLite history.
 
 ## Phase 3: iOS build pipeline

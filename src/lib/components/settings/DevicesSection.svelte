@@ -291,8 +291,10 @@
       <div>
         <p class="text-sm font-medium text-text">Also sync images</p>
         <p class="text-xs text-text-muted">
-          Screenshots and copied pictures up to {maxImageMb} MB. Turn off if
-          you often copy screenshots with private information.
+          Screenshots and images copied from apps, up to {maxImageMb} MB.
+          Image files copied in a file manager aren't sent; use Send on the
+          item. Turn off if you often copy screenshots with private
+          information.
         </p>
       </div>
       <button

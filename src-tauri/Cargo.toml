@@ -99,6 +99,10 @@ cairo-rs = { version = "0.20", features = ["png"] }
 pango = "0.20"
 pangocairo = "0.20"
 md5 = "0.7"
+# HACK(dereck): same crate wry uses; only for the dev-build CORS allowlist in
+# lib.rs. Remove together with that block once Tauri fixes it
+# (https://github.com/tauri-apps/tauri/issues/16201).
+webkit2gtk = "2.0"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
