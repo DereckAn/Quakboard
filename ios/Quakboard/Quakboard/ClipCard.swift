@@ -56,15 +56,19 @@ struct ClipCard: View {
             Spacer(minLength: 4)
             Button(action: onTogglePin) {
                 Image(systemName: item.isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 13))
-                    .foregroundStyle(item.isPinned ? Theme.accentText : Theme.textMuted)
+                    .font(.system(size: 13, weight: item.isPinned ? .semibold : .regular))
+                    .rotationEffect(.degrees(item.isPinned ? 0 : 45))
+                    .foregroundStyle(item.isPinned ? Theme.onAccent : Theme.textMuted)
                     .frame(width: 28, height: 28)
-                    .background(Theme.inset, in: RoundedRectangle(cornerRadius: 8))
+                    .background(item.isPinned ? Theme.accent : Theme.inset, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(item.isPinned ? Color.clear : Theme.border))
+                    .animation(.spring(response: 0.25, dampingFraction: 0.8), value: item.isPinned)
                     // A 44-point target around the small icon.
                     .contentShape(Rectangle().inset(by: -8))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(item.isPinned ? "Unpin" : "Pin")
+            .accessibilityLabel("Pin")
+            .accessibilityAddTraits(item.isPinned ? .isSelected : [])
         }
     }
 
