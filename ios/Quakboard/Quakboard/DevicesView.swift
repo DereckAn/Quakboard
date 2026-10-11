@@ -27,7 +27,22 @@ struct ContentView: View {
                 }
                 Section("Paired devices") {
                     ForEach(model.peers, id: \.id) { peer in
-                        Text(peer.name)
+                        Text("\(peer.name)\(peer.isOnline ? " · online" : "")")
+                    }
+                }
+                Section {
+                    ForEach(model.nearby, id: \.id) { device in
+                        HStack {
+                            Text("Quakboard #\(device.id.suffix(4))")
+                            Spacer()
+                            Button("Pair") { model.pair(withDevice: device.id) }
+                        }
+                    }
+                } header: {
+                    Text("Nearby")
+                } footer: {
+                    if let problem = model.discoveryProblem {
+                        Text(problem)
                     }
                 }
                 Section("Last received text") {

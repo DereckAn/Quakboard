@@ -5,6 +5,8 @@ import SwiftUI
 final class SyncModel: ObservableObject {
     @Published private(set) var identityLine = "Starting…"
     @Published private(set) var peers: [PeerInfo] = []
+    @Published private(set) var nearby: [NearbyDevice] = []
+    @Published private(set) var discoveryProblem: String?
     @Published private(set) var lastText = "Nothing yet"
     @Published private(set) var isWaitingForCode = false
     @Published private(set) var status = ""
@@ -18,6 +20,7 @@ final class SyncModel: ObservableObject {
     #endif
 
     private var node: SyncNode?
+    private var discovery: Discovery?
 
     func start() async {
         guard node == nil else { return }
@@ -35,6 +38,12 @@ final class SyncModel: ObservableObject {
             let me = node.identity()
             identityLine = "\(me.name) (\(me.shortId)), port \(Self.port)"
             peers = node.peers()
+            discovery = Discovery(
+                deviceId: me.id,
+                port: Self.port,
+                onChange: { [weak self] devices in self?.nearbyChanged(devices) },
+                onProblem: { [weak self] problem in self?.discoveryProblem = problem }
+            )
         } catch {
             status = error.localizedDescription
         }
@@ -43,6 +52,16 @@ final class SyncModel: ObservableObject {
     func pair(with address: String) {
         do {
             try node?.pairWithAddress(address: address)
+            isWaitingForCode = true
+            status = "Type the code the desktop shows"
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func pair(withDevice id: String) {
+        do {
+            try node?.pairWithDevice(deviceId: id)
             isWaitingForCode = true
             status = "Type the code the desktop shows"
         } catch {
@@ -64,13 +83,21 @@ final class SyncModel: ObservableObject {
         status = "Sent to \(reached) device(s)"
     }
 
+    private func nearbyChanged(_ devices: [NearbyDevice]) {
+        node?.setNearby(devices: devices)
+        peers = node?.peers() ?? []
+        let paired = Set(peers.map(\.id))
+        nearby = devices.filter { !paired.contains($0.id) }.sorted { $0.id < $1.id }
+    }
+
     fileprivate func handle(_ event: PairingEvent) {
         switch event {
         case .codeShown(let code):
             status = "Type \(code) on the other device"
-        case .paired(_, let name):
+        case .paired(let peerId, let name):
             isWaitingForCode = false
             peers = node?.peers() ?? []
+            nearby.removeAll { $0.id == peerId }
             status = "Paired with \(name)"
         case .failed(let reason, _):
             isWaitingForCode = false
