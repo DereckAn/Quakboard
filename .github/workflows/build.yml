@@ -85,6 +85,11 @@ jobs:
       - name: Backend tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # Linux only: code behind #[cfg(target_os = ...)] for macOS or Windows
+      # isn't linted here.
+      - name: Backend lint
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
       # The shared sync core. --no-default-features is how the phone apps
       # build it (no mdns-sd), so that configuration must keep compiling.
       # Shares the desktop's target dir so dependencies build once.
