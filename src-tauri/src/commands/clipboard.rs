@@ -1,4 +1,5 @@
 use crate::clipboard::operations::write_clipboard_image;
+#[cfg(target_os = "macos")]
 use crate::clipboard::state::take_previous_app_pid;
 use crate::clipboard::{asset_cleanup, read_clipboard, write_clipboard};
 // Only the Wayland paste path (Linux, and the shared non-macOS code) uses these.

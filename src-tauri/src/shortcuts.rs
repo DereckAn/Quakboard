@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
+#[cfg(target_os = "macos")]
 use crate::clipboard::state::store_previous_app_pid;
 use crate::commands::lab::{capture_screenshot_core, CaptureMode};
 use crate::AppState;
