@@ -4,6 +4,9 @@ import SwiftUI
 /// Sync switches, this device, paired and nearby devices, and pairing.
 struct SettingsView: View {
     @ObservedObject var model: SyncModel
+    /// On iPad the system navigation bar stays, since it holds the button
+    /// that brings the sidebar back.
+    var isInSplitView = false
 
     @State private var address = ""
     @State private var unpairing: PeerInfo?
@@ -32,13 +35,21 @@ struct SettingsView: View {
                 }
                 .padding(16)
                 // Room for the tab bar.
-                .padding(.bottom, 72)
+                .padding(.bottom, isInSplitView ? 0 : 72)
+                // Readable on a wide iPad screen.
+                .frame(maxWidth: 680)
+                .frame(maxWidth: .infinity)
             }
             .safeAreaInset(edge: .top, spacing: 0) {
-                AppTitle(subtitle: "Settings").headerBar()
+                if !isInSplitView {
+                    AppTitle(subtitle: "Settings").headerBar()
+                }
             }
             .background(Theme.background)
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationTitle("Devices & Sync")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.background, for: .navigationBar)
+            .toolbar(isInSplitView ? .automatic : .hidden, for: .navigationBar)
             .confirmationDialog(
                 "Unpair \(unpairing?.name ?? "")?",
                 isPresented: Binding(get: { unpairing != nil }, set: { if !$0 { unpairing = nil } }),

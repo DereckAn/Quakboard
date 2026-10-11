@@ -1,9 +1,9 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The system Paste button, which doesn't ask "Allow Paste?", in the draft's
-/// sand colors. SwiftUI's PasteButton ignores the text color, leaving white
-/// on sand. Its label is always the system's "Paste".
+/// The system Paste button, which doesn't ask "Allow Paste?", in the accent
+/// colors (SwiftUI's PasteButton ignores the text color). Its label is always
+/// the system's "Paste".
 struct PasteControl: UIViewRepresentable {
     let onPaste: ([NSItemProvider]) -> Void
 
@@ -11,8 +11,8 @@ struct PasteControl: UIViewRepresentable {
         let configuration = UIPasteControl.Configuration()
         configuration.displayMode = .iconAndLabel
         configuration.cornerStyle = .capsule
-        configuration.baseBackgroundColor = UIColor(Theme.accent)
-        configuration.baseForegroundColor = UIColor(Theme.onAccent)
+        configuration.baseBackgroundColor = Theme.uiAccent
+        configuration.baseForegroundColor = Theme.uiOnAccent
         let control = UIPasteControl(configuration: configuration)
         control.target = context.coordinator
         return control

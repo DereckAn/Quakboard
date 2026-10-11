@@ -7,25 +7,12 @@ struct ClipsView: View {
 
     @State private var opened: HistoryItem?
 
-    private static let filters: [(title: String, kind: HistoryItem.Kind)] = [
-        ("Links", .link), ("Code", .code), ("Colors", .color), ("Images", .image), ("Plain Text", .text),
-    ]
-
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     chips
-                    if !model.page.pinned.isEmpty {
-                        SectionHeader(title: "Pinned", systemImage: "pin.fill", count: model.page.pinned.count)
-                        ForEach(model.page.pinned) { card($0) }
-                    }
-                    if !isPinnedOnly {
-                        ForEach(Self.groups(model.page.recent), id: \.title) { group in
-                            SectionHeader(title: group.title, systemImage: "clock", count: group.items.count)
-                            ForEach(group.items) { card($0) }
-                        }
-                    }
+                    ClipList(model: model, isPinnedOnly: isPinnedOnly) { opened = $0 }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
@@ -33,7 +20,6 @@ struct ClipsView: View {
                 .padding(.bottom, 88)
             }
             .safeAreaInset(edge: .top, spacing: 0) { header }
-            .overlay { emptyState }
             .overlay(alignment: .bottomTrailing) {
                 if !isPinnedOnly { pasteButton }
             }
@@ -44,7 +30,7 @@ struct ClipsView: View {
                 set: { if !$0 { opened = nil } }
             )) {
                 if let opened {
-                    HistoryDetailView(model: model, item: opened)
+                    ClipDetailView(model: model, item: opened) { self.opened = nil }
                 }
             }
         }
@@ -53,27 +39,7 @@ struct ClipsView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             AppTitle(subtitle: isPinnedOnly ? "Pinned" : "All Clips")
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(Theme.textMuted)
-                    .accessibilityHidden(true)
-                TextField("", text: $model.search, prompt: Text("Search clips").foregroundColor(Theme.textMuted))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .foregroundStyle(Theme.text)
-                if !model.search.isEmpty {
-                    Button { model.search = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .foregroundStyle(Theme.textMuted)
-                    .accessibilityLabel("Clear search")
-                }
-            }
-            .font(.subheadline)
-            .padding(.horizontal, 12)
-            .frame(height: 38)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border))
+            SearchField(text: $model.search)
         }
         .headerBar()
     }
@@ -82,8 +48,8 @@ struct ClipsView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 chip("All", kind: nil, count: model.page.counts.values.reduce(0, +))
-                ForEach(Self.filters, id: \.kind) { filter in
-                    chip(filter.title, kind: filter.kind, count: model.page.counts[filter.kind] ?? 0)
+                ForEach(HistoryItem.Kind.filterOrder, id: \.self) { kind in
+                    chip(kind.pluralTitle, kind: kind, count: model.page.counts[kind] ?? 0)
                 }
             }
             .padding(.horizontal, 16)
@@ -113,60 +79,10 @@ struct ClipsView: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private func card(_ item: HistoryItem) -> some View {
-        ClipCard(
-            item: item,
-            imageURL: model.imageURL(of: item),
-            onCopy: { model.copy(item) },
-            onTogglePin: { model.togglePin(item) }
-        )
-        .contentShape(Rectangle())
-        .onTapGesture { opened = item }
-        .accessibilityAction(named: "Open") { opened = item }
-    }
-
-    @ViewBuilder
-    private var emptyState: some View {
-        if model.page.pinned.isEmpty && (isPinnedOnly || model.page.recent.isEmpty) {
-            Text(emptyMessage)
-                .font(.subheadline)
-                .foregroundStyle(Theme.textMuted)
-                .multilineTextAlignment(.center)
-                .padding(32)
-        }
-    }
-
-    private var emptyMessage: String {
-        if !model.search.isEmpty || model.filter != nil { return "No matches" }
-        return isPinnedOnly
-            ? "Pin a clip to keep it here."
-            : "Nothing yet. Copy something on a paired device, or paste here to send it."
-    }
-
     private var pasteButton: some View {
         PasteControl { providers in model.pasteAndSend(providers) }
             .frame(width: 112, height: 44)
             .shadow(color: Theme.accent.opacity(0.25), radius: 10, y: 6)
             .padding(16)
-    }
-
-    /// The desktop's groups: Today, Yesterday, This Week, This Month, Older.
-    private static func groups(_ items: [HistoryItem], now: Date = .now) -> [(title: String, items: [HistoryItem])] {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: now)
-        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
-        let weekAgo = calendar.date(byAdding: .day, value: -7, to: today)!
-        let monthAgo = calendar.date(byAdding: .month, value: -1, to: today)!
-
-        let titles = ["Today", "Yesterday", "This Week", "This Month", "Older"]
-        let byTitle = Dictionary(grouping: items) { item -> String in
-            let day = calendar.startOfDay(for: item.createdAt)
-            if day == today { return "Today" }
-            if day == yesterday { return "Yesterday" }
-            if day >= weekAgo { return "This Week" }
-            if day >= monthAgo { return "This Month" }
-            return "Older"
-        }
-        return titles.compactMap { title in byTitle[title].map { (title, $0) } }
     }
 }

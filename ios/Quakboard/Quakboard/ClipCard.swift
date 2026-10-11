@@ -5,6 +5,7 @@ import SwiftUI
 struct ClipCard: View {
     let item: HistoryItem
     let imageURL: URL?
+    var isSelected = false
     let onCopy: () -> Void
     let onTogglePin: () -> Void
 
@@ -13,7 +14,7 @@ struct ClipCard: View {
             topRow
             content
             HStack {
-                Text(details)
+                Text(item.sizeDescription)
                     .font(.caption2.monospaced())
                     .foregroundStyle(Theme.textMuted)
                 Spacer()
@@ -21,16 +22,16 @@ struct ClipCard: View {
             }
         }
         .card(item.isPinned ? Theme.cardRaised : Theme.card)
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 14).stroke(Theme.accentText, lineWidth: 2)
+            }
+        }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var text: String {
         item.text ?? ""
-    }
-
-    /// Without the trailing newline most copied code ends with, which would
-    /// show as an empty line.
-    private var trimmedText: String {
-        String(text.reversed().drop { $0.isNewline }.reversed())
     }
 
     private var topRow: some View {
@@ -82,7 +83,7 @@ struct ClipCard: View {
         case .color:
             HStack(spacing: 12) {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Self.swatch(for: text) ?? Theme.inset)
+                    .fill(item.swatch ?? Theme.inset)
                     .frame(width: 56, height: 56)
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border))
                     .accessibilityHidden(true)
@@ -93,7 +94,7 @@ struct ClipCard: View {
             }
         case .link:
             VStack(alignment: .leading, spacing: 2) {
-                if let host = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines))?.host {
+                if let host = item.host {
                     Text(host)
                         .font(.caption.monospaced().weight(.semibold))
                         .foregroundStyle(Theme.accentText)
@@ -105,7 +106,7 @@ struct ClipCard: View {
             }
             .insetBlock()
         case .code:
-            Text(trimmedText)
+            Text(item.trimmedText)
                 .font(.caption.monospaced())
                 .foregroundStyle(Theme.text)
                 .lineLimit(8)
@@ -119,45 +120,11 @@ struct ClipCard: View {
         }
     }
 
-    private var details: String {
-        switch item.kind {
-        case .image:
-            return "PNG"
-        case .code:
-            let lines = trimmedText.split(separator: "\n", omittingEmptySubsequences: false).count
-            return "\(lines) lines • \(text.utf8.count) bytes"
-        case .text, .link, .color:
-            return "\(text.count) chars"
-        }
-    }
-
-    /// The draft's primary (sand) button on pinned cards, outlined otherwise.
+    /// The accent button on pinned cards, outlined otherwise.
     private var copyButton: some View {
         Button(action: onCopy) {
             Label("Copy", systemImage: "doc.on.doc")
         }
         .buttonStyle(ThemeButtonStyle(isPrimary: item.isPinned))
-    }
-
-    /// `#RGB` or `#RRGGBB`. The desktop also detects rgb(), hsl() and
-    /// oklch(); those show no swatch.
-    private static func swatch(for text: String) -> Color? {
-        var hex = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard hex.hasPrefix("#") else { return nil }
-        hex.removeFirst()
-        if hex.count == 3 {
-            hex = hex.map { "\($0)\($0)" }.joined()
-        }
-        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return nil }
-        return Color(hex: value)
-    }
-}
-
-private extension View {
-    func insetBlock() -> some View {
-        frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(Theme.inset, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.border.opacity(0.6)))
     }
 }

@@ -201,6 +201,23 @@ final class SyncModel: ObservableObject {
         }
     }
 
+    func delete(_ item: HistoryItem) {
+        guard let store, let id = item.id else { return }
+        do {
+            try store.delete(id)
+            reloadHistory()
+            showToast("Deleted")
+        } catch {
+            showToast(error.localizedDescription, isError: true)
+        }
+    }
+
+    /// The clip as currently loaded, after a pin or an edit.
+    func item(withID id: Int64?) -> HistoryItem? {
+        guard let id else { return nil }
+        return (page.pinned + page.recent).first { $0.id == id }
+    }
+
     func imageURL(of item: HistoryItem) -> URL? {
         guard let store, let file = item.imageFile else { return nil }
         return store.imagesDir.appending(path: file)

@@ -3,21 +3,34 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var model = SyncModel()
     @AppStorage(Appearance.storageKey) private var appearance = Appearance.system
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
-        TabView {
-            ClipsView(model: model, isPinnedOnly: false)
-                .tabItem { Label("All Clips", systemImage: "doc.on.clipboard") }
-            ClipsView(model: model, isPinnedOnly: true)
-                .tabItem { Label("Pinned", systemImage: "pin") }
-            SettingsView(model: model)
-                .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+        Group {
+            if usesWorkspace {
+                WorkspaceView(model: model)
+            } else {
+                TabView {
+                    ClipsView(model: model, isPinnedOnly: false)
+                        .tabItem { Label("All Clips", systemImage: "doc.on.clipboard") }
+                    ClipsView(model: model, isPinnedOnly: true)
+                        .tabItem { Label("Pinned", systemImage: "pin") }
+                    SettingsView(model: model)
+                        .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+                }
+            }
         }
         .tint(Theme.accentText)
         .overlay(alignment: .top) { toast }
         .animation(.default, value: model.toast)
         .preferredColorScheme(appearance.colorScheme)
         .task { await model.start() }
+    }
+
+    /// The iPad layout needs a full-width iPad. Slide Over, a narrow Split
+    /// View and big iPhones in landscape keep the iPhone layout.
+    private var usesWorkspace: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad && sizeClass == .regular
     }
 
     @ViewBuilder

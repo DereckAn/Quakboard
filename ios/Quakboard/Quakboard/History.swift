@@ -34,8 +34,9 @@ struct HistoryItem: Codable, Identifiable, Sendable, FetchableRecord, MutablePer
 struct HistoryPage: Sendable {
     var pinned: [HistoryItem] = []
     var recent: [HistoryItem] = []
-    /// Over the whole history, for the filter chips.
+    /// Over the whole history, for the filter chips and the iPad sidebar.
     var counts: [HistoryItem.Kind: Int] = [:]
+    var pinnedCount = 0
 }
 
 /// Received and sent clips. Safe to use from any thread: the delegate saves
@@ -104,6 +105,18 @@ final class History: Sendable {
         }
     }
 
+    /// Removes the clip and, for an image, its file.
+    func delete(_ id: Int64) throws {
+        let file = try db.write { db -> String? in
+            let file = try HistoryItem.fetchOne(db, id: id)?.imageFile
+            _ = try HistoryItem.deleteOne(db, id: id)
+            return file
+        }
+        if let file {
+            try? FileManager.default.removeItem(at: imagesDir.appending(path: file))
+        }
+    }
+
     func setPinned(_ id: Int64, _ isPinned: Bool) throws {
         try db.write { db in
             _ = try HistoryItem.filter(id: id).updateAll(db, Column("isPinned").set(to: isPinned))
@@ -128,7 +141,8 @@ final class History: Sendable {
             return HistoryPage(
                 pinned: try request.filter(Column("isPinned")).fetchAll(db),
                 recent: try request.filter(!Column("isPinned")).limit(Self.recentLimit).fetchAll(db),
-                counts: counts
+                counts: counts,
+                pinnedCount: try HistoryItem.filter(Column("isPinned")).fetchCount(db)
             )
         }
     }
