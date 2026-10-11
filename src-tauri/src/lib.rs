@@ -389,49 +389,47 @@ pub fn run() {
                 window.hide().unwrap();
                 api.prevent_close();
             }
-            tauri::WindowEvent::Focused(focused) => {
-                if !focused {
-                    if let Some(state) = window.try_state::<Mutex<AppState>>() {
-                        if let Ok(app_state) = state.lock() {
-                            let db_path = app_state.db_path.clone();
-                            let event_window = window.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Ok(repo) =
-                                    crate::db::repository::ClipboardRepository::new(&db_path)
-                                {
-                                    if let Ok(removed) = repo.cleanup_missing_file_records() {
-                                        if !removed.is_empty() {
-                                            let _ = event_window
-                                                .emit("clipboard-items-removed", removed);
-                                        }
+            tauri::WindowEvent::Focused(false) => {
+                if let Some(state) = window.try_state::<Mutex<AppState>>() {
+                    if let Ok(app_state) = state.lock() {
+                        let db_path = app_state.db_path.clone();
+                        let event_window = window.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Ok(repo) =
+                                crate::db::repository::ClipboardRepository::new(&db_path)
+                            {
+                                if let Ok(removed) = repo.cleanup_missing_file_records() {
+                                    if !removed.is_empty() {
+                                        let _ =
+                                            event_window.emit("clipboard-items-removed", removed);
                                     }
-                                }
-                            });
-                        }
-                    }
-
-                    #[cfg(target_os = "windows")]
-                    {
-                        // En Windows: delay para evitar ocultar durante drag
-                        let window_clone = window.clone();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            // Verificar si la ventana sigue sin foco
-                            if let Ok(is_focused) = window_clone.is_focused() {
-                                if !is_focused && !clipboard::state::should_keep_window_open() {
-                                    let _ = window_clone.hide();
                                 }
                             }
                         });
                     }
+                }
 
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        // macOS y Linux: ocultar inmediatamente, unless one of our
-                        // own dialogs (e.g. a folder picker) took the focus.
-                        if !clipboard::state::should_keep_window_open() {
-                            let _ = window.hide();
+                #[cfg(target_os = "windows")]
+                {
+                    // En Windows: delay para evitar ocultar durante drag
+                    let window_clone = window.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        // Verificar si la ventana sigue sin foco
+                        if let Ok(is_focused) = window_clone.is_focused() {
+                            if !is_focused && !clipboard::state::should_keep_window_open() {
+                                let _ = window_clone.hide();
+                            }
                         }
+                    });
+                }
+
+                #[cfg(not(target_os = "windows"))]
+                {
+                    // macOS y Linux: ocultar inmediatamente, unless one of our
+                    // own dialogs (e.g. a folder picker) took the focus.
+                    if !clipboard::state::should_keep_window_open() {
+                        let _ = window.hide();
                     }
                 }
             }

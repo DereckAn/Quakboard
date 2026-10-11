@@ -150,7 +150,10 @@ pub fn convert_color(color_string: &str) -> Result<ColorConversion, String> {
     })
 }
 
-fn parse_color(color_string: &str) -> Result<((f32, f32, f32, f32), String), String> {
+/// Red, green, blue and alpha, each from 0 to 1.
+type Rgba = (f32, f32, f32, f32);
+
+fn parse_color(color_string: &str) -> Result<(Rgba, String), String> {
     let trimmed = color_string.trim();
 
     // HEX
@@ -186,7 +189,7 @@ fn parse_color(color_string: &str) -> Result<((f32, f32, f32, f32), String), Str
     Err("Unsupported color format".to_string())
 }
 
-fn parse_hex(hex: &str) -> Result<((f32, f32, f32, f32), String), String> {
+fn parse_hex(hex: &str) -> Result<(Rgba, String), String> {
     let hex = hex.trim_start_matches('#');
 
     let (r, g, b, a) = match hex.len() {
@@ -217,7 +220,7 @@ fn parse_hex(hex: &str) -> Result<((f32, f32, f32, f32), String), String> {
     ))
 }
 
-fn parse_rgb(rgb: &str) -> Result<((f32, f32, f32, f32), String), String> {
+fn parse_rgb(rgb: &str) -> Result<(Rgba, String), String> {
     let inner = rgb.trim_start_matches("rgb(").trim_end_matches(')');
     let parts: Vec<&str> = inner.split(',').collect();
 
@@ -235,7 +238,7 @@ fn parse_rgb(rgb: &str) -> Result<((f32, f32, f32, f32), String), String> {
     ))
 }
 
-fn parse_rgba(rgba: &str) -> Result<((f32, f32, f32, f32), String), String> {
+fn parse_rgba(rgba: &str) -> Result<(Rgba, String), String> {
     let inner = rgba.trim_start_matches("rgba(").trim_end_matches(')');
     let parts: Vec<&str> = inner.split(',').collect();
 
@@ -254,7 +257,7 @@ fn parse_rgba(rgba: &str) -> Result<((f32, f32, f32, f32), String), String> {
     ))
 }
 
-fn parse_hsl(hsl: &str) -> Result<((f32, f32, f32, f32), String), String> {
+fn parse_hsl(hsl: &str) -> Result<(Rgba, String), String> {
     let inner = hsl.trim_start_matches("hsl(").trim_end_matches(')');
     let parts: Vec<&str> = inner.split(',').collect();
 
@@ -282,7 +285,7 @@ fn parse_hsl(hsl: &str) -> Result<((f32, f32, f32, f32), String), String> {
     Ok(((rgb.red, rgb.green, rgb.blue, 1.0), "HSL".to_string()))
 }
 
-fn parse_hsla(hsla: &str) -> Result<((f32, f32, f32, f32), String), String> {
+fn parse_hsla(hsla: &str) -> Result<(Rgba, String), String> {
     let inner = hsla.trim_start_matches("hsla(").trim_end_matches(')');
     let parts: Vec<&str> = inner.split(',').collect();
 
@@ -311,7 +314,7 @@ fn parse_hsla(hsla: &str) -> Result<((f32, f32, f32, f32), String), String> {
     Ok(((rgb.red, rgb.green, rgb.blue, a), "HSLA".to_string()))
 }
 
-fn parse_oklch(oklch: &str) -> Result<((f32, f32, f32, f32), String), String> {
+fn parse_oklch(oklch: &str) -> Result<(Rgba, String), String> {
     let inner = oklch.trim_start_matches("oklch(").trim_end_matches(')');
     let parts: Vec<&str> = inner.split_whitespace().collect();
 

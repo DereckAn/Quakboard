@@ -66,7 +66,7 @@ pub fn store_prepared_file(
     let file_name = source_path
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or_else(|| prepared.file_name.as_str())
+        .unwrap_or(prepared.file_name.as_str())
         .to_string();
 
     let original_name = file_name.clone();

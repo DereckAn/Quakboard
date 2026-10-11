@@ -319,13 +319,13 @@ fn register_single_screenshot_shortcut(
     println!("Parsed {} shortcut: {:?}", label, shortcut);
 
     // Unregister if already registered
-    if manager.is_registered(shortcut.clone()) {
+    if manager.is_registered(shortcut) {
         println!(
             "{} shortcut already registered, unregistering first...",
             label
         );
         manager
-            .unregister(shortcut.clone())
+            .unregister(shortcut)
             .map_err(|e| format!("Failed to unregister {} shortcut: {}", label, e))?;
     }
 
@@ -335,7 +335,7 @@ fn register_single_screenshot_shortcut(
     let label_owned = label.to_string();
 
     manager
-        .on_shortcut(shortcut.clone(), move |_app, _shortcut, event| {
+        .on_shortcut(shortcut, move |_app, _shortcut, event| {
             if event.state() == ShortcutState::Pressed {
                 println!(">>> {} screenshot hotkey PRESSED!", label_owned);
 

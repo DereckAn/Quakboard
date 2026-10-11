@@ -254,7 +254,7 @@ fn guess_screenshot_from_dimensions(width: u32, height: u32) -> bool {
     };
 
     let aspect_ratio = max_side / min_side;
-    aspect_ratio >= 1.2 && aspect_ratio <= 3.6
+    (1.2..=3.6).contains(&aspect_ratio)
 }
 
 /// Generate a 256px thumbnail of an external image into `target_dir` using the

@@ -44,8 +44,8 @@ pub fn generate_thumbnail(path: &Path, target_path: &Path) -> Result<bool, Strin
 }
 
 fn write_cgimage_to_png(image: &CGImage, target_path: &Path) -> Result<bool, String> {
-    let width = image.width() as usize;
-    let height = image.height() as usize;
+    let width = image.width();
+    let height = image.height();
     if width == 0 || height == 0 {
         return Ok(false);
     }
