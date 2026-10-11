@@ -839,11 +839,6 @@ fn run_region_capture_with_helper(
             println!("  - {}", entry.path().display());
             if let Ok(metadata) = entry.metadata() {
                 println!("    Size: {} bytes", metadata.len());
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    // println!("    Permissions: {:o}", metadata.permissions().mode());
-                }
             }
         }
     }

@@ -3,7 +3,6 @@
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };

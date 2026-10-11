@@ -78,6 +78,8 @@ pub fn register_shortcut(app: &AppHandle, shortcut_str: &str) -> Result<(), Stri
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyBackend {
     GlobalShortcut,
+    // Only detected on Linux, but matched in shared code on every platform.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Hyprland,
 }
 
@@ -333,7 +335,7 @@ fn register_single_screenshot_shortcut(
     let label_owned = label.to_string();
 
     manager
-        .on_shortcut(shortcut.clone(), move |_app, shortcut, event| {
+        .on_shortcut(shortcut.clone(), move |_app, _shortcut, event| {
             if event.state() == ShortcutState::Pressed {
                 println!(">>> {} screenshot hotkey PRESSED!", label_owned);
 

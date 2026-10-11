@@ -1,8 +1,9 @@
 use crate::clipboard::operations::write_clipboard_image;
 use crate::clipboard::state::take_previous_app_pid;
-use crate::clipboard::{
-    asset_cleanup, detect_backend, read_clipboard, write_clipboard, ClipboardBackend,
-};
+use crate::clipboard::{asset_cleanup, read_clipboard, write_clipboard};
+// Only the Wayland paste path (Linux, and the shared non-macOS code) uses these.
+#[cfg(not(target_os = "macos"))]
+use crate::clipboard::{detect_backend, ClipboardBackend};
 use crate::db::models::{ClipboardItem, CreateClipboardItemDto, UpdateClipboardItemDto};
 use crate::db::repository::ClipboardRepository;
 use enigo::{Enigo, Key, Keyboard, Settings};
