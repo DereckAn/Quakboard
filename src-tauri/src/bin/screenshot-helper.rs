@@ -66,17 +66,16 @@ fn run_region(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
             let geometry = String::from_utf8_lossy(&selection.stdout)
                 .trim()
                 .to_string();
-            if !geometry.is_empty() {
-                if Command::new("grim")
+            if !geometry.is_empty()
+                && Command::new("grim")
                     .arg("-g")
                     .arg(geometry)
                     .arg(path)
                     .status()
                     .map(|s| s.success())
                     .unwrap_or(false)
-                {
-                    return Ok(());
-                }
+            {
+                return Ok(());
             }
         }
     }
