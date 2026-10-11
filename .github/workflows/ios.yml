@@ -1,0 +1,58 @@
+name: iOS
+
+# Only when something the iOS app is built from changes: macOS runners are
+# slow and costly.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - app
+      - develop
+    paths: &ios-paths
+      - "crates/**"
+      - "ios/**"
+      - "scripts/build-ios.sh"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    branches:
+      - main
+      - app
+      - develop
+    paths: *ios-paths
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: XCFramework and test app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      - name: Cache cargo registry
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-ios-cargo-registry-${{ hashFiles('crates/quakboard-sync-ffi/Cargo.lock') }}
+
+      - name: Build the Swift package
+        run: ./scripts/build-ios.sh
+
+      # A generic simulator build covers both slices of the simulator library
+      # (Apple Silicon and Intel). No signing: nothing is installed.
+      - name: Build the app
+        run: |
+          xcodebuild -project ios/Quakboard/Quakboard.xcodeproj -scheme Quakboard \
+            -destination "generic/platform=iOS Simulator" \
+            CODE_SIGNING_ALLOWED=NO build
