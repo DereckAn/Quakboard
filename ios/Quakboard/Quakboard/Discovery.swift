@@ -25,6 +25,9 @@ final class Discovery: NSObject {
     private var found: [String: NearbyDevice] = [:]
     private var isPublished = false
     private var isBrowsing = false
+    // Separate, so one recovering doesn't hide the other still failing.
+    private var publishProblem: String?
+    private var browseProblem: String?
 
     init(
         deviceId: String,
@@ -75,11 +78,15 @@ final class Discovery: NSObject {
         onChange(Array(found.values))
     }
 
-    private func failed(_ action: String, _ errorDict: [String: NSNumber]) {
+    private static func problem(_ action: String, _ errorDict: [String: NSNumber]) -> String {
         let code = errorDict[NetService.errorCode]?.intValue ?? 0
-        onProblem(code == Self.policyDenied
+        return code == Self.policyDenied
             ? "Allow Local Network for Quakboard in Settings > Privacy & Security to find nearby devices."
-            : "Couldn't \(action) on the network (error \(code)). Retrying…")
+            : "Couldn't \(action) on the network (error \(code)). Retrying…"
+    }
+
+    private func reportProblems() {
+        onProblem(browseProblem ?? publishProblem)
     }
 
     /// A LAN address over loopback, like the desktop.
@@ -101,12 +108,14 @@ final class Discovery: NSObject {
 extension Discovery: @preconcurrency NetServiceBrowserDelegate {
     func netServiceBrowserWillSearch(_ browser: NetServiceBrowser) {
         isBrowsing = true
-        onProblem(nil)
+        browseProblem = nil
+        reportProblems()
     }
 
     func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch errorDict: [String: NSNumber]) {
         isBrowsing = false
-        failed("look for devices", errorDict)
+        browseProblem = Self.problem("look for devices", errorDict)
+        reportProblems()
     }
 
     func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
@@ -127,11 +136,14 @@ extension Discovery: @preconcurrency NetServiceBrowserDelegate {
 extension Discovery: @preconcurrency NetServiceDelegate {
     func netServiceDidPublish(_ sender: NetService) {
         isPublished = true
+        publishProblem = nil
+        reportProblems()
     }
 
     func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
         isPublished = false
-        failed("announce this device", errorDict)
+        publishProblem = Self.problem("announce this device", errorDict)
+        reportProblems()
     }
 
     func netServiceDidResolveAddress(_ sender: NetService) {

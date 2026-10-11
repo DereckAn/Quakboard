@@ -228,6 +228,8 @@ Built on `feat/build-ios`. Where it differs from the steps above, this section i
 - Pairing keys (`sync.json`) go in an **App Group** container, so the Share Extension can use them too, with Data Protection set to `complete`.
 - History lives in **SwiftData** (or GRDB/SQLite): text, images (as files), and remote file items.
 
+**Design:** the screens follow the owner's UI draft. Apply it before building the Devices screen, so it's built once.
+
 **Screens (SwiftUI):**
 - **History:** a list grouped by date like the desktop, with search, plus detail views for text, images and files.
 - **Devices:** the same flows as desktop. A sync toggle, this device's name and IP, paired devices with Unpair, nearby devices with Pair, Connect by IP, and the code-entry and code-display sheets.

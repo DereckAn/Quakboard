@@ -7,7 +7,10 @@ final class SyncModel: ObservableObject {
     @Published private(set) var peers: [PeerInfo] = []
     @Published private(set) var nearby: [NearbyDevice] = []
     @Published private(set) var discoveryProblem: String?
-    @Published private(set) var lastText = "Nothing yet"
+    @Published private(set) var history: [HistoryItem] = []
+    @Published var search = "" {
+        didSet { reloadHistory() }
+    }
     @Published private(set) var isWaitingForCode = false
     @Published private(set) var status = ""
 
@@ -20,6 +23,7 @@ final class SyncModel: ObservableObject {
     #endif
 
     private var node: SyncNode?
+    private var store: History?
     private var discovery: Discovery?
 
     func start() async {
@@ -27,11 +31,23 @@ final class SyncModel: ObservableObject {
         do {
             let dir = URL.applicationSupportDirectory
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let store = try History(dir: dir)
+            self.store = store
+            reloadHistory()
+            // Pairing keys: Rust saves through a temporary file and a rename,
+            // and new files take their folder's protection class.
+            // TODO(dereck): move to the App Group container with the Share Extension (Phase 4, step 5)
+            let syncDir = dir.appending(path: "sync", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: syncDir, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes(
+                [.protectionKey: FileProtectionType.complete],
+                ofItemAtPath: syncDir.path(percentEncoded: false)
+            )
             let node = try SyncNode(
-                dataDir: dir.path(percentEncoded: false),
+                dataDir: syncDir.path(percentEncoded: false),
                 deviceName: UIDevice.current.name,
                 listenPort: Self.port,
-                delegate: Delegate(model: self)
+                delegate: Delegate(model: self, history: store)
             )
             self.node = node
             try await node.start()
@@ -83,6 +99,20 @@ final class SyncModel: ObservableObject {
         status = "Sent to \(reached) device(s)"
     }
 
+    func imageURL(of item: HistoryItem) -> URL? {
+        guard let store, let file = item.imageFile else { return nil }
+        return store.imagesDir.appending(path: file)
+    }
+
+    private func reloadHistory() {
+        guard let store else { return }
+        do {
+            history = try store.items(matching: search)
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
     private func nearbyChanged(_ devices: [NearbyDevice]) {
         node?.setNearby(devices: devices)
         peers = node?.peers() ?? []
@@ -106,28 +136,46 @@ final class SyncModel: ObservableObject {
     }
 
     fileprivate func received(text: String) {
-        lastText = text
+        UIPasteboard.general.string = text
+        reloadHistory()
     }
 
-    fileprivate func receivedImage(from name: String) {
-        status = "Received an image from \(name)"
+    fileprivate func receivedImage() {
+        reloadHistory()
+    }
+
+    fileprivate func failedToSave(_ error: Error) {
+        status = "Couldn't save to history: \(error.localizedDescription)"
     }
 }
 
-// Rust calls these on a background thread.
+// Rust calls these on a background thread, so saving (a PNG can be 20 MB)
+// happens here, off the main thread.
 private final class Delegate: SyncDelegate {
     let model: SyncModel
+    let history: History
 
-    init(model: SyncModel) {
+    init(model: SyncModel, history: History) {
         self.model = model
+        self.history = history
     }
 
     func onText(text: String) {
-        Task { @MainActor in model.received(text: text) }
+        do {
+            try history.saveText(text)
+            Task { @MainActor in model.received(text: text) }
+        } catch {
+            Task { @MainActor in model.failedToSave(error) }
+        }
     }
 
     func onImage(png: Data, width: UInt32, height: UInt32, fromName: String) {
-        Task { @MainActor in model.receivedImage(from: fromName) }
+        do {
+            try history.saveImage(png: png, fromName: fromName)
+            Task { @MainActor in model.receivedImage() }
+        } catch {
+            Task { @MainActor in model.failedToSave(error) }
+        }
     }
 
     func onFileOffer(file: RemoteFileInfo) {}

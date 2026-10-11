@@ -1,7 +1,7 @@
 import SwiftUI
 
-struct ContentView: View {
-    @StateObject private var model = SyncModel()
+struct DevicesView: View {
+    @ObservedObject var model: SyncModel
     @State private var address = ""
     @State private var code = ""
     @State private var outgoing = ""
@@ -45,10 +45,6 @@ struct ContentView: View {
                         Text(problem)
                     }
                 }
-                Section("Last received text") {
-                    Text(model.lastText)
-                        .textSelection(.enabled)
-                }
                 Section("Send text") {
                     TextField("Text", text: $outgoing)
                     Button("Send") { Task { await model.send(outgoing) } }
@@ -59,8 +55,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .navigationTitle("Quakboard")
+            .navigationTitle("Devices")
         }
-        .task { await model.start() }
     }
 }

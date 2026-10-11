@@ -100,7 +100,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A1000000000000000000000B /* XCLocalSwiftPackageReference "../QuakboardSync" */,
-				A10000000000000000000042 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				A10000000000000000000042 /* XCRemoteSwiftPackageReference "GRDB" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A10000000000000000000006 /* Products */;
@@ -241,7 +241,7 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		A10000000000000000000042 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+		A10000000000000000000042 /* XCRemoteSwiftPackageReference "GRDB" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/groue/GRDB.swift";
 			requirement = {
@@ -252,14 +252,14 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		A10000000000000000000041 /* GRDB */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A10000000000000000000042 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
-			productName = GRDB;
-		};
 		A10000000000000000000010 /* QuakboardSync */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = QuakboardSync;
+		};
+		A10000000000000000000041 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000042 /* XCRemoteSwiftPackageReference "GRDB" */;
+			productName = GRDB;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
