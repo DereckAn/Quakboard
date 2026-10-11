@@ -49,7 +49,7 @@ struct SettingsView: View {
             } message: { peer in
                 Text("Clips stop syncing with \(peer.name). Pair again to resume.")
             }
-            .sheet(item: $model.pairing, onDismiss: model.cancelPairing) { pairing in
+            .sheet(item: $model.pairing, onDismiss: { model.cancelPairing() }) { pairing in
                 PairingSheet(model: model, pairing: pairing)
             }
             .onAppear { model.setAcceptingPairing(true) }
@@ -90,12 +90,12 @@ struct SettingsView: View {
             toggle(
                 "Sync",
                 detail: "Receive from and send to paired devices while Quakboard is open.",
-                isOn: Binding(get: { model.isSyncEnabled }, set: model.setSyncEnabled)
+                isOn: Binding(get: { model.isSyncEnabled }, set: { model.setSyncEnabled($0) })
             )
             toggle(
                 "Also sync images",
                 detail: "Send and receive copied images, up to 20 MB.",
-                isOn: Binding(get: { model.isSyncingImages }, set: model.setSyncingImages)
+                isOn: Binding(get: { model.isSyncingImages }, set: { model.setSyncingImages($0) })
             )
             if let problem = model.syncProblem {
                 Label(problem, systemImage: "exclamationmark.triangle")

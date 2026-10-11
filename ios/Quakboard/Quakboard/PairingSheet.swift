@@ -39,7 +39,7 @@ struct PairingSheet: View {
                     .textSelection(.enabled)
                     .accessibilityLabel(code.map(String.init).joined(separator: " "))
             }
-            Button("Cancel", action: model.cancelPairing)
+            Button("Cancel") { model.cancelPairing() }
                 .buttonStyle(ThemeButtonStyle())
         }
         .padding(24)

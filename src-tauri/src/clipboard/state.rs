@@ -133,12 +133,14 @@ impl SkipWindow {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_store_previous_app_pid() {
         store_previous_app_pid(12345);
         assert_eq!(take_previous_app_pid(), 12345);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_take_previous_app_pid() {
         store_previous_app_pid(12345);
