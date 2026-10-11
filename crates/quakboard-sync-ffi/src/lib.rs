@@ -147,8 +147,9 @@ pub struct RemoteFileInfo {
 /// hop to the main thread before touching UI.
 #[uniffi::export(with_foreign)]
 pub trait SyncDelegate: Send + Sync {
-    /// Text a paired device sent.
-    fn on_text(&self, text: String);
+    /// Text a paired device sent. `content_type` is the sender's guess:
+    /// `text`, `link`, `code` or `color`.
+    fn on_text(&self, text: String, content_type: String);
     /// An image a paired device sent, already checked to be a safe PNG of
     /// this size.
     fn on_image(&self, png: Vec<u8>, width: u32, height: u32, from_name: String);
@@ -477,7 +478,7 @@ fn hooks(
         delegate,
     );
     SyncHooks {
-        apply_clip: Arc::new(move |clip| text_to.on_text(clip.text)),
+        apply_clip: Arc::new(move |clip| text_to.on_text(clip.text, clip.content_type)),
         apply_image: Arc::new(move |image: ReceivedImage| {
             let (width, height) = (image.meta.width, image.meta.height);
             image_to.on_image(image.png, width, height, image.from_name);
@@ -590,7 +591,7 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq)]
     enum Event {
-        Text(String),
+        Text(String, String),
         Image {
             width: u32,
             height: u32,
@@ -604,8 +605,8 @@ mod tests {
     struct Inbox(mpsc::UnboundedSender<Event>);
 
     impl SyncDelegate for Inbox {
-        fn on_text(&self, text: String) {
-            let _ = self.0.send(Event::Text(text));
+        fn on_text(&self, text: String, content_type: String) {
+            let _ = self.0.send(Event::Text(text, content_type));
         }
         fn on_image(&self, _png: Vec<u8>, width: u32, height: u32, from_name: String) {
             let _ = self.0.send(Event::Image {
@@ -722,7 +723,7 @@ mod tests {
 
         assert_eq!(
             next_event(&mut b).await,
-            Some(Event::Text("hello phone".into()))
+            Some(Event::Text("hello phone".into(), "text".into()))
         );
     }
 

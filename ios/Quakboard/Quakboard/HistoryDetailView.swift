@@ -1,37 +1,28 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct HistoryDetailView: View {
+    @ObservedObject var model: SyncModel
     let item: HistoryItem
-    let imageURL: URL?
-
-    @State private var isCopied = false
 
     var body: some View {
         ScrollView {
-            if let imageURL {
+            if let imageURL = model.imageURL(of: item) {
                 HistoryImage(url: imageURL, maxPixels: 2048)
                     .padding()
             } else {
                 Text(item.text ?? "")
+                    .font(item.kind == .code ? .callout.monospaced() : .body)
+                    .foregroundStyle(Theme.text)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
             }
         }
+        .background(Theme.background)
         .navigationTitle(item.createdAt.formatted(date: .abbreviated, time: .shortened))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            Button(isCopied ? "Copied" : "Copy", action: copy)
+            Button("Copy") { model.copy(item) }
         }
-    }
-
-    private func copy() {
-        if let imageURL, let png = try? Data(contentsOf: imageURL) {
-            UIPasteboard.general.setData(png, forPasteboardType: UTType.png.identifier)
-        } else if let text = item.text {
-            UIPasteboard.general.string = text
-        }
-        isCopied = true
     }
 }

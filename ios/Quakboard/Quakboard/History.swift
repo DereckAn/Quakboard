@@ -2,8 +2,15 @@ import Foundation
 import GRDB
 
 struct HistoryItem: Codable, Identifiable, Sendable, FetchableRecord, MutablePersistableRecord {
-    enum Kind: String, Codable, Sendable {
-        case text, image
+    /// The desktop's content types for text, plus images.
+    enum Kind: String, Codable, Sendable, CaseIterable {
+        case text, link, code, color, image
+
+        /// What the sender called it; anything unknown is plain text.
+        init(contentType: String) {
+            let kind = Kind(rawValue: contentType) ?? .text
+            self = kind == .image ? .text : kind
+        }
     }
 
     var id: Int64?
@@ -14,6 +21,7 @@ struct HistoryItem: Codable, Identifiable, Sendable, FetchableRecord, MutablePer
     /// Who sent it. Text doesn't say yet: the sync core's text hook has no sender.
     var fromName: String?
     var createdAt: Date
+    var isPinned = false
 
     static let databaseTableName = "item"
 
@@ -22,11 +30,19 @@ struct HistoryItem: Codable, Identifiable, Sendable, FetchableRecord, MutablePer
     }
 }
 
-/// Received text and images. Safe to use from any thread: the delegate saves
+/// What the clips screens show.
+struct HistoryPage: Sendable {
+    var pinned: [HistoryItem] = []
+    var recent: [HistoryItem] = []
+    /// Over the whole history, for the filter chips.
+    var counts: [HistoryItem.Kind: Int] = [:]
+}
+
+/// Received and sent clips. Safe to use from any thread: the delegate saves
 /// from Rust's background thread.
 final class History: Sendable {
-    // ponytail: newest 500 only, no paging; add paging when phones keep more.
-    private static let listLimit = 500
+    // ponytail: newest 500 unpinned only, no paging; add paging when phones keep more.
+    private static let recentLimit = 500
 
     let imagesDir: URL
     private let db: DatabaseQueue
@@ -47,21 +63,33 @@ final class History: Sendable {
                 t.column("createdAt", .datetime).notNull().indexed()
             }
         }
+        migrator.registerMigration("v2: pinning") { db in
+            try db.alter(table: HistoryItem.databaseTableName) { t in
+                t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
+            }
+        }
         try migrator.migrate(db)
     }
 
     /// The same text again moves to the top instead of being stored twice,
-    /// like the desktop.
-    func saveText(_ text: String) throws {
+    /// like the desktop, and keeps its pin.
+    func saveText(_ text: String, kind: HistoryItem.Kind) throws {
         try db.write { db in
-            try HistoryItem.filter(Column("kind") == HistoryItem.Kind.text.rawValue && Column("text") == text)
-                .deleteAll(db)
-            var item = HistoryItem(kind: .text, text: text, createdAt: .now)
-            try item.insert(db)
+            let textKinds = HistoryItem.Kind.allCases.filter { $0 != .image }.map(\.rawValue)
+            if var item = try HistoryItem
+                .filter(textKinds.contains(Column("kind")) && Column("text") == text)
+                .fetchOne(db) {
+                item.createdAt = .now
+                item.kind = kind
+                try item.update(db)
+            } else {
+                var item = HistoryItem(kind: kind, text: text, createdAt: .now)
+                try item.insert(db)
+            }
         }
     }
 
-    func saveImage(png: Data, fromName: String) throws {
+    func saveImage(png: Data, fromName: String?) throws {
         let file = "\(UUID().uuidString).png"
         let url = imagesDir.appending(path: file)
         try png.write(to: url, options: .completeFileProtection)
@@ -76,15 +104,32 @@ final class History: Sendable {
         }
     }
 
-    /// Newest first. `search` matches text, case-insensitively.
-    func items(matching search: String) throws -> [HistoryItem] {
+    func setPinned(_ id: Int64, _ isPinned: Bool) throws {
+        try db.write { db in
+            _ = try HistoryItem.filter(id: id).updateAll(db, Column("isPinned").set(to: isPinned))
+        }
+    }
+
+    /// Newest first. `search` matches text, case-insensitively; `kind` nil is all.
+    func page(search: String, kind: HistoryItem.Kind?) throws -> HistoryPage {
         try db.read { db in
             var request = HistoryItem.order(Column("createdAt").desc)
             let search = search.trimmingCharacters(in: .whitespaces)
             if !search.isEmpty {
                 request = request.filter(Column("text").like("%\(search)%"))
             }
-            return try request.limit(Self.listLimit).fetchAll(db)
+            if let kind {
+                request = request.filter(Column("kind") == kind.rawValue)
+            }
+            let counts = try Row.fetchAll(db, sql: "SELECT kind, COUNT(*) FROM item GROUP BY kind")
+                .reduce(into: [HistoryItem.Kind: Int]()) { counts, row in
+                    if let kind = HistoryItem.Kind(rawValue: row[0]) { counts[kind] = row[1] }
+                }
+            return HistoryPage(
+                pinned: try request.filter(Column("isPinned")).fetchAll(db),
+                recent: try request.filter(!Column("isPinned")).limit(Self.recentLimit).fetchAll(db),
+                counts: counts
+            )
         }
     }
 }

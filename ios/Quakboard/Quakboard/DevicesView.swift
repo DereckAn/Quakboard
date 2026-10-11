@@ -4,7 +4,6 @@ struct DevicesView: View {
     @ObservedObject var model: SyncModel
     @State private var address = ""
     @State private var code = ""
-    @State private var outgoing = ""
 
     var body: some View {
         NavigationStack {
@@ -45,16 +44,14 @@ struct DevicesView: View {
                         Text(problem)
                     }
                 }
-                Section("Send text") {
-                    TextField("Text", text: $outgoing)
-                    Button("Send") { Task { await model.send(outgoing) } }
-                }
                 if !model.status.isEmpty {
                     Section("Status") {
                         Text(model.status)
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.background)
             .navigationTitle("Devices")
         }
     }
