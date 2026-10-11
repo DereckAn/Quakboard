@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var model = SyncModel()
+    @AppStorage(Appearance.storageKey) private var appearance = Appearance.system
 
     var body: some View {
         TabView {
@@ -9,12 +10,13 @@ struct ContentView: View {
                 .tabItem { Label("All Clips", systemImage: "doc.on.clipboard") }
             ClipsView(model: model, isPinnedOnly: true)
                 .tabItem { Label("Pinned", systemImage: "pin") }
-            DevicesView(model: model)
+            SettingsView(model: model)
                 .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
         }
         .tint(Theme.accentText)
         .overlay(alignment: .top) { toast }
         .animation(.default, value: model.toast)
+        .preferredColorScheme(appearance.colorScheme)
         .task { await model.start() }
     }
 

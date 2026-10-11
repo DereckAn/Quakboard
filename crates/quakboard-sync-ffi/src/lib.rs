@@ -381,9 +381,11 @@ impl SyncNode {
             .map_err(|_| SyncNodeError::InvalidInput("That pairing already ended".into()))
     }
 
-    /// Give up on the pairing waiting for a code; it ends as cancelled.
+    /// Give up on the pairing in progress, whether it waits for a code typed
+    /// here or shows one for the other device; it ends as cancelled.
     pub fn cancel_pairing(&self) {
         lock(&self.pending_code).take();
+        self.service.cancel_responding();
     }
 
     /// Forget a paired device. Returns whether it was paired.

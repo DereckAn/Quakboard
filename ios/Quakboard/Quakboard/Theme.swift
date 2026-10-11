@@ -37,3 +37,52 @@ extension Color {
         )
     }
 }
+
+extension View {
+    /// The draft's card: a rounded fill with a thin border.
+    func card(_ fill: Color = Theme.card) -> some View {
+        padding(12)
+            .background(fill, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.border))
+    }
+}
+
+/// The draft's small buttons: sand when primary, outlined otherwise.
+struct ThemeButtonStyle: ButtonStyle {
+    var isPrimary = false
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(isPrimary ? Theme.onAccent : Theme.text)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(isPrimary ? Theme.accent : Theme.cardRaised, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(isPrimary ? Color.clear : Theme.border))
+            .opacity(!isEnabled ? 0.4 : configuration.isPressed ? 0.7 : 1)
+    }
+}
+
+/// The Appearance choice in Settings, saved under `storageKey`.
+enum Appearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    static let storageKey = "appearance"
+
+    var id: Self { self }
+
+    var title: String {
+        rawValue.capitalized
+    }
+
+    /// nil follows the system setting.
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+}

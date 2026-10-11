@@ -9,10 +9,34 @@ final class SyncModel: ObservableObject {
         var isError = false
     }
 
-    @Published private(set) var identityLine = "Starting…"
+    /// A pairing in progress, shown as a sheet.
+    enum Pairing: Identifiable, Equatable {
+        /// This phone asked: type the code the other device shows.
+        case enteringCode
+        /// Another device asked: show this code, to type over there.
+        case showingCode(String)
+
+        var id: String {
+            switch self {
+            case .enteringCode: "entering"
+            case .showingCode(let code): "showing \(code)"
+            }
+        }
+    }
+
+    private enum Keys {
+        static let isSyncEnabled = "isSyncEnabled"
+        static let isSyncingImages = "isSyncingImages"
+    }
+
+    @Published private(set) var identity: DeviceIdentity?
     @Published private(set) var peers: [PeerInfo] = []
     @Published private(set) var nearby: [NearbyDevice] = []
     @Published private(set) var discoveryProblem: String?
+    @Published private(set) var syncProblem: String?
+    @Published private(set) var isSyncEnabled = UserDefaults.standard.object(forKey: Keys.isSyncEnabled) as? Bool ?? true
+    @Published private(set) var isSyncingImages = UserDefaults.standard.object(forKey: Keys.isSyncingImages) as? Bool ?? true
+    @Published var pairing: Pairing?
     @Published private(set) var page = HistoryPage()
     @Published var search = "" {
         didSet { reloadHistory() }
@@ -22,21 +46,23 @@ final class SyncModel: ObservableObject {
         didSet { reloadHistory() }
     }
     @Published private(set) var toast: Toast?
-    @Published private(set) var isWaitingForCode = false
-    @Published private(set) var status = ""
 
     // The simulator shares the Mac's network, where the desktop app already
     // listens on the default port.
     #if targetEnvironment(simulator)
-    private static let port = defaultSyncPort() + 1
+    static let port = defaultSyncPort() + 1
     #else
-    private static let port = defaultSyncPort()
+    static let port = defaultSyncPort()
     #endif
 
     private var node: SyncNode?
     private var store: History?
     private var discovery: Discovery?
+    /// Everything discovery sees, paired or not; `nearby` is the unpaired part.
+    private var allNearby: [NearbyDevice] = []
     private var toastTask: Task<Void, Never>?
+    /// The latest start or stop; each waits for the one before.
+    private var syncTask: Task<Void, Never>?
 
     func start() async {
         guard node == nil else { return }
@@ -61,52 +87,86 @@ final class SyncModel: ObservableObject {
                 listenPort: Self.port,
                 delegate: Delegate(model: self, history: store)
             )
+            node.setSyncingImages(enabled: isSyncingImages)
             self.node = node
-            try await node.start()
-            let me = node.identity()
-            identityLine = "\(me.name) (\(me.shortId)), port \(Self.port)"
+            identity = node.identity()
             peers = node.peers()
-            discovery = Discovery(
-                deviceId: me.id,
-                port: Self.port,
-                onChange: { [weak self] devices in self?.nearbyChanged(devices) },
-                onProblem: { [weak self] problem in self?.discoveryProblem = problem }
-            )
         } catch {
-            status = error.localizedDescription
+            syncProblem = error.localizedDescription
+            return
+        }
+        if isSyncEnabled {
+            applySyncSetting()
         }
     }
 
-    func pair(with address: String) {
+    func setSyncEnabled(_ isEnabled: Bool) {
+        isSyncEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: Keys.isSyncEnabled)
+        applySyncSetting()
+    }
+
+    func setSyncingImages(_ isEnabled: Bool) {
+        isSyncingImages = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: Keys.isSyncingImages)
+        node?.setSyncingImages(enabled: isEnabled)
+    }
+
+    /// Answer pairing requests only while Settings is on screen, so nobody on
+    /// the network can pop up a code at other times.
+    func setAcceptingPairing(_ isAccepting: Bool) {
+        node?.setAcceptingPairing(accepting: isAccepting)
+    }
+
+    func pair(withAddress address: String) {
         do {
             try node?.pairWithAddress(address: address)
-            isWaitingForCode = true
-            status = "Type the code the desktop shows"
+            pairing = .enteringCode
         } catch {
-            status = error.localizedDescription
+            showToast(error.localizedDescription, isError: true)
         }
     }
 
     func pair(withDevice id: String) {
         do {
             try node?.pairWithDevice(deviceId: id)
-            isWaitingForCode = true
-            status = "Type the code the desktop shows"
+            pairing = .enteringCode
         } catch {
-            status = error.localizedDescription
+            showToast(error.localizedDescription, isError: true)
         }
     }
 
+    /// The outcome arrives as a pairing event.
     func submit(code: String) {
         do {
             try node?.submitPairingCode(code: code)
         } catch {
-            status = error.localizedDescription
+            pairing = nil
+            showToast(error.localizedDescription, isError: true)
+        }
+    }
+
+    func cancelPairing() {
+        node?.cancelPairing()
+        pairing = nil
+    }
+
+    func unpair(_ peer: PeerInfo) {
+        do {
+            _ = try node?.unpair(peerId: peer.id)
+            refreshDevices()
+            showToast("Unpaired \(peer.name)")
+        } catch {
+            showToast(error.localizedDescription, isError: true)
         }
     }
 
     /// From the system Paste button, which doesn't ask "Allow Paste?".
     func pasteAndSend(_ providers: [NSItemProvider]) {
+        guard isSyncEnabled else {
+            showToast("Turn on Sync in Settings to send", isError: true)
+            return
+        }
         guard let provider = providers.first else { return }
         if provider.canLoadObject(ofClass: UIImage.self) {
             _ = provider.loadObject(ofClass: UIImage.self) { [weak self] image, _ in
@@ -195,25 +255,73 @@ final class SyncModel: ObservableObject {
         }
     }
 
+    /// Starts and stops run one at a time, each applying the switch as it is
+    /// when its turn comes, so quick toggles end in the last state chosen.
+    private func applySyncSetting() {
+        let previous = syncTask
+        syncTask = Task {
+            await previous?.value
+            if isSyncEnabled {
+                await startSync()
+            } else {
+                stopSync()
+            }
+        }
+    }
+
+    private func startSync() async {
+        guard let node, let identity, discovery == nil else { return }
+        do {
+            try await node.start()
+            syncProblem = nil
+        } catch {
+            syncProblem = "Couldn't start sync: \(error.localizedDescription)"
+            return
+        }
+        discovery = Discovery(
+            deviceId: identity.id,
+            port: Self.port,
+            onChange: { [weak self] devices in self?.nearbyChanged(devices) },
+            onProblem: { [weak self] problem in self?.discoveryProblem = problem }
+        )
+    }
+
+    private func stopSync() {
+        node?.stop()
+        discovery?.stop()
+        discovery = nil
+        discoveryProblem = nil
+        nearbyChanged([])
+    }
+
     private func nearbyChanged(_ devices: [NearbyDevice]) {
+        allNearby = devices
         node?.setNearby(devices: devices)
+        refreshDevices()
+    }
+
+    private func refreshDevices() {
         peers = node?.peers() ?? []
         let paired = Set(peers.map(\.id))
-        nearby = devices.filter { !paired.contains($0.id) }.sorted { $0.id < $1.id }
+        nearby = allNearby.filter { !paired.contains($0.id) }.sorted { $0.id < $1.id }
     }
 
     fileprivate func handle(_ event: PairingEvent) {
         switch event {
         case .codeShown(let code):
-            status = "Type \(code) on the other device"
-        case .paired(let peerId, let name):
-            isWaitingForCode = false
-            peers = node?.peers() ?? []
-            nearby.removeAll { $0.id == peerId }
-            status = "Paired with \(name)"
-        case .failed(let reason, _):
-            isWaitingForCode = false
-            status = reason
+            pairing = .showingCode(code)
+        case .paired(_, let name):
+            pairing = nil
+            refreshDevices()
+            showToast("Paired with \(name)")
+        case .failed(let reason, let needsUpdate):
+            // A failure after the user cancelled isn't news, unless one of
+            // the devices needs updating.
+            let wasPairing = pairing != nil
+            pairing = nil
+            if wasPairing || needsUpdate {
+                showToast(reason, isError: true)
+            }
         }
     }
 

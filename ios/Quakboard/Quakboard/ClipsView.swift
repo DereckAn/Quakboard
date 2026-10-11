@@ -17,12 +17,12 @@ struct ClipsView: View {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     chips
                     if !model.page.pinned.isEmpty {
-                        sectionHeader("Pinned", systemImage: "pin.fill", count: model.page.pinned.count)
+                        SectionHeader(title: "Pinned", systemImage: "pin.fill", count: model.page.pinned.count)
                         ForEach(model.page.pinned) { card($0) }
                     }
                     if !isPinnedOnly {
                         ForEach(Self.groups(model.page.recent), id: \.title) { group in
-                            sectionHeader(group.title, systemImage: "clock", count: group.items.count)
+                            SectionHeader(title: group.title, systemImage: "clock", count: group.items.count)
                             ForEach(group.items) { card($0) }
                         }
                     }
@@ -52,23 +52,7 @@ struct ClipsView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: "doc.on.clipboard")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.accentText)
-                    .frame(width: 32, height: 32)
-                    .background(Theme.cardRaised, in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.border))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Quakboard")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(Theme.text)
-                    Text(isPinnedOnly ? "Pinned" : "All Clips")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-            }
+            AppTitle(subtitle: isPinnedOnly ? "Pinned" : "All Clips")
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(Theme.textMuted)
@@ -91,12 +75,7 @@ struct ClipsView: View {
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border))
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Theme.background)
-        .overlay(alignment: .bottom) {
-            Theme.border.frame(height: 0.5)
-        }
+        .headerBar()
     }
 
     private var chips: some View {
@@ -132,27 +111,6 @@ struct ClipsView: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-
-    private func sectionHeader(_ title: String, systemImage: String, count: Int) -> some View {
-        HStack {
-            HStack(spacing: 6) {
-                Image(systemName: systemImage)
-                    .foregroundStyle(Theme.accentText)
-                    .accessibilityHidden(true)
-                Text(title)
-                    .foregroundStyle(Theme.text)
-            }
-            .font(.subheadline.weight(.semibold))
-            Spacer()
-            Text("\(count) \(count == 1 ? "ITEM" : "ITEMS")")
-                .font(.caption2.monospaced().weight(.semibold))
-                .tracking(1)
-                .foregroundStyle(Theme.textMuted)
-        }
-        .padding(.top, 8)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
     }
 
     private func card(_ item: HistoryItem) -> some View {

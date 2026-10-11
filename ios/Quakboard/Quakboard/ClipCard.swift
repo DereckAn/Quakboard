@@ -20,9 +20,7 @@ struct ClipCard: View {
                 copyButton
             }
         }
-        .padding(12)
-        .background(item.isPinned ? Theme.cardRaised : Theme.card, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.border))
+        .card(item.isPinned ? Theme.cardRaised : Theme.card)
     }
 
     private var text: String {
@@ -137,14 +135,8 @@ struct ClipCard: View {
     private var copyButton: some View {
         Button(action: onCopy) {
             Label("Copy", systemImage: "doc.on.doc")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(item.isPinned ? Theme.onAccent : Theme.text)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(item.isPinned ? Theme.accent : Theme.cardRaised, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(item.isPinned ? Color.clear : Theme.border))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ThemeButtonStyle(isPrimary: item.isPinned))
     }
 
     /// `#RGB` or `#RRGGBB`. The desktop also detects rgb(), hsl() and

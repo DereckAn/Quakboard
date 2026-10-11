@@ -23,6 +23,7 @@ final class Discovery: NSObject {
     // NetService only resolves while something holds it. Keyed by service name.
     private var services: [String: NetService] = [:]
     private var found: [String: NearbyDevice] = [:]
+    private var timer: Timer?
     private var isPublished = false
     private var isBrowsing = false
     // Separate, so one recovering doesn't hide the other still failing.
@@ -44,9 +45,34 @@ final class Discovery: NSObject {
         advertised.setTXTRecord(NetService.data(fromTXTRecord: [discoveryIdKey(): Data(deviceId.utf8)]))
         browser.delegate = self
         refresh()
-        Timer.scheduledTimer(withTimeInterval: Self.refreshInterval, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: Self.refreshInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
+    }
+
+    /// Stop advertising and looking. A stopped Discovery isn't restarted;
+    /// make a new one.
+    func stop() {
+        timer?.invalidate()
+        advertised.stop()
+        browser.stop()
+        services.values.forEach { $0.stop() }
+        services = [:]
+    }
+
+    /// This device's LAN IPv4, Wi-Fi first, for "connect by IP" on a desktop.
+    static func localIPv4() -> String? {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return nil }
+        defer { freeifaddrs(list) }
+        let found = sequence(first: first) { $0.pointee.ifa_next }.compactMap { entry -> (name: String, ip: String)? in
+            guard let address = entry.pointee.ifa_addr,
+                  address.pointee.sa_family == sa_family_t(AF_INET),
+                  let ip = numericHost(address, length: socklen_t(address.pointee.sa_len)),
+                  !ip.hasPrefix("127.") else { return nil }
+            return (String(cString: entry.pointee.ifa_name), ip)
+        }
+        return (found.first { $0.name == "en0" } ?? found.first)?.ip
     }
 
     private func refresh() {
@@ -93,15 +119,20 @@ final class Discovery: NSObject {
     private static func pickIPv4(_ addresses: [Data]) -> String? {
         let ips = addresses.compactMap { data -> String? in
             data.withUnsafeBytes { raw in
-                guard let sockaddr = raw.baseAddress?.assumingMemoryBound(to: sockaddr.self),
-                      sockaddr.pointee.sa_family == sa_family_t(AF_INET) else { return nil }
-                var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                guard getnameinfo(sockaddr, socklen_t(data.count), &host, socklen_t(host.count),
-                                  nil, 0, NI_NUMERICHOST) == 0 else { return nil }
-                return String(decoding: host.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
+                guard let address = raw.baseAddress?.assumingMemoryBound(to: sockaddr.self),
+                      address.pointee.sa_family == sa_family_t(AF_INET) else { return nil }
+                return numericHost(address, length: socklen_t(data.count))
             }
         }
         return ips.first { !$0.hasPrefix("127.") } ?? ips.first
+    }
+
+    private static func numericHost(_ address: UnsafePointer<sockaddr>, length: socklen_t) -> String? {
+        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        guard getnameinfo(address, length, &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else {
+            return nil
+        }
+        return String(decoding: host.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
     }
 }
 
