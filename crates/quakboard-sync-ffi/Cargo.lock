@@ -1293,9 +1293,12 @@ name = "quakboard-sync-ffi"
 version = "0.1.0"
 dependencies = [
  "quakboard-sync",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "uniffi",
+ "uuid",
 ]
 
 [[package]]

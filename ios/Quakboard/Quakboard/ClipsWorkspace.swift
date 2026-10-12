@@ -74,6 +74,7 @@ struct ClipsWorkspace: View {
                 .background(Theme.inset, in: Capsule())
                 .fixedSize()
             if !isPinnedOnly {
+                SendFileButton(model: model)
                 PasteControl { providers in model.pasteAndSend(providers) }
                     .frame(width: 112, height: 40)
             }

@@ -409,6 +409,52 @@ final class SyncModel: ObservableObject {
         }
     }
 
+    /// From the Files picker. The file is copied into Documents first: a
+    /// picked file is only lent to the app for a moment, and it must stay put
+    /// until the other devices fetch it, which they do from this device while
+    /// the app is open.
+    func offerFile(at picked: URL) {
+        guard let node, let store else { return }
+        guard isSyncEnabled else {
+            showToast("Turn on Sync in Settings to send", isError: true)
+            return
+        }
+        Task {
+            do {
+                let copy = try await Task.detached { try Self.copyIntoDocuments(picked) }.value
+                let size = try copy.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                let mime = UTType(filenameExtension: copy.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+                try store.saveSentFile(name: copy.lastPathComponent, size: Int64(size), mime: mime)
+                reloadHistory()
+                let reached = try await node.offerFile(path: copy.path(percentEncoded: false), mime: mime)
+                showToast(reached == 0
+                    ? "Saved, but no paired device was reached"
+                    : "Offered to \(reached) device\(reached == 1 ? "" : "s"). Keep Quakboard open until it's fetched.")
+            } catch {
+                showToast(Self.message(error), isError: true)
+            }
+        }
+    }
+
+    /// Never replaces a file already there: "report.pdf" becomes "report 2.pdf".
+    nonisolated private static func copyIntoDocuments(_ picked: URL) throws -> URL {
+        let isAccessing = picked.startAccessingSecurityScopedResource()
+        defer {
+            if isAccessing { picked.stopAccessingSecurityScopedResource() }
+        }
+        let name = picked.lastPathComponent
+        let base = (name as NSString).deletingPathExtension
+        let ext = (name as NSString).pathExtension
+        var copy = URL.documentsDirectory.appending(path: name)
+        var number = 2
+        while FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)) {
+            copy = URL.documentsDirectory.appending(path: ext.isEmpty ? "\(base) \(number)" : "\(base) \(number).\(ext)")
+            number += 1
+        }
+        try FileManager.default.copyItem(at: picked, to: copy)
+        return copy
+    }
+
     func imageURL(of item: HistoryItem) -> URL? {
         guard let store, let file = item.imageFile else { return nil }
         return store.imagesDir.appending(path: file)

@@ -159,6 +159,21 @@ final class History: Sendable {
         }
     }
 
+    /// A file this device offered: already "saved", since it's in Documents.
+    func saveSentFile(name: String, size: Int64, mime: String) throws {
+        try db.write { db in
+            var item = HistoryItem(
+                kind: .file,
+                createdAt: .now,
+                fileName: name,
+                fileSize: size,
+                fileMime: mime,
+                savedFile: name
+            )
+            try item.insert(db)
+        }
+    }
+
     func setSavedFile(_ id: Int64, name: String) throws {
         try db.write { db in
             _ = try HistoryItem.filter(id: id).updateAll(db, Column("savedFile").set(to: name))

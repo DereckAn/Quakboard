@@ -115,7 +115,7 @@ extension SyncModel.FileState {
         switch self {
         case .remote: "On \(origin ?? "another device")"
         case .fetching(let fraction): "Downloading… \(Int(fraction * 100))%"
-        case .saved: "Saved in Files"
+        case .saved: origin == nil ? "Sent from this device · in Files" : "Saved in Files"
         }
     }
 }

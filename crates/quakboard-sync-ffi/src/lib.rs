@@ -10,12 +10,14 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex, OnceLock},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use quakboard_sync::{
     discovery::short_id,
     fetching::RemoteFile,
     image::{png_dimensions, ImageDetails},
+    offers::{hash_file, FileOfferInfo, Offer},
     protocol::Incompatible,
     service::{self, ReceivedImage, ReceivedOffer, SyncHooks, SyncService},
     store::{SyncStore, STORE_FILE_NAME},
@@ -25,6 +27,8 @@ use quakboard_sync::{
 use tokio::{net::TcpListener, runtime::Runtime, sync::oneshot, task::JoinHandle};
 
 uniffi::setup_scaffolding!();
+
+mod offers;
 
 /// The port desktops listen on. Phones use it too, so desktops reach them.
 #[uniffi::export]
@@ -190,6 +194,8 @@ pub struct SyncNode {
     nearby: Arc<Mutex<HashMap<String, SocketAddr>>>,
     /// Delivers the code the user types to the pairing that waits for it.
     pending_code: Mutex<Option<oneshot::Sender<String>>>,
+    /// The files this device offered (`offers.json`), served when fetched.
+    offers_path: PathBuf,
 }
 
 #[uniffi::export]
@@ -203,7 +209,8 @@ impl SyncNode {
         listen_port: u16,
         delegate: Arc<dyn SyncDelegate>,
     ) -> Result<Arc<Self>, SyncNodeError> {
-        let store_path = PathBuf::from(data_dir).join(STORE_FILE_NAME);
+        let store_path = PathBuf::from(&data_dir).join(STORE_FILE_NAME);
+        let offers_path = PathBuf::from(&data_dir).join(offers::OFFERS_FILE_NAME);
         let store = if store_path.exists() {
             SyncStore::load_or_create(&store_path)
         } else {
@@ -213,7 +220,7 @@ impl SyncNode {
         .map_err(|e| SyncNodeError::Storage(e.to_string()))?;
 
         let nearby = Arc::new(Mutex::new(HashMap::new()));
-        let hooks = hooks(delegate, Arc::clone(&nearby));
+        let hooks = hooks(delegate, Arc::clone(&nearby), offers_path.clone());
         Ok(Arc::new(SyncNode {
             service: SyncService::new(store, store_path, listen_port, hooks),
             listen_port,
@@ -221,6 +228,7 @@ impl SyncNode {
             next_start: Mutex::new(0),
             nearby,
             pending_code: Mutex::new(None),
+            offers_path,
         }))
     }
 
@@ -358,6 +366,53 @@ impl SyncNode {
         .map_err(|e| SyncNodeError::Fetch(e.to_string()))
     }
 
+    /// Offer a file to every paired device. They fetch it from this device,
+    /// so only while it's receiving, and the file must stay where it is until
+    /// then. Returns how many devices the offer reached.
+    pub async fn offer_file(&self, path: String, mime: String) -> Result<u32, SyncNodeError> {
+        let path = PathBuf::from(path);
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| SyncNodeError::InvalidInput("That isn't a file".into()))?;
+        let service = self.service.clone();
+        let offers_path = self.offers_path.clone();
+        run(async move {
+            let hashing = path.clone();
+            // Reads the whole file: keep it off the async workers.
+            let hashed = tokio::task::spawn_blocking(move || hash_file(&hashing, |_, _| {}))
+                .await
+                .map_err(|e| SyncNodeError::Storage(e.to_string()))?
+                .map_err(|e| {
+                    SyncNodeError::InvalidInput(format!("Couldn't read that file: {e}"))
+                })?;
+            let to: Vec<String> = service.peers().into_iter().map(|peer| peer.id).collect();
+            let offer_id = uuid::Uuid::new_v4().to_string();
+            let offer = Offer {
+                offer_id: offer_id.clone(),
+                item_id: offer_id.clone(),
+                path,
+                stamp: hashed.stamp,
+                sha256: hashed.sha256.clone(),
+                offered_to: to.clone(),
+                created_at: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|since| since.as_secs().to_string())
+                    .unwrap_or_default(),
+            };
+            offers::add(&offers_path, &offer).map_err(|e| SyncNodeError::Storage(e.to_string()))?;
+            let info = FileOfferInfo {
+                offer_id,
+                name,
+                size: hashed.stamp.size,
+                mime,
+                sha256: hashed.sha256,
+            };
+            Ok(count(service.send_offer(&info, &to).await))
+        })
+        .await?
+    }
+
     /// Answer pairing requests from other devices. Only while a pairing
     /// screen is open, so nobody on the LAN can pop up a code at other times.
     pub fn set_accepting_pairing(&self, accepting: bool) {
@@ -480,6 +535,7 @@ impl Drop for SyncNode {
 fn hooks(
     delegate: Arc<dyn SyncDelegate>,
     nearby: Arc<Mutex<HashMap<String, SocketAddr>>>,
+    offers_path: PathBuf,
 ) -> SyncHooks {
     let (text_to, image_to, offer_to, pairing_to) = (
         Arc::clone(&delegate),
@@ -504,9 +560,7 @@ fn hooks(
                 sha256: offer.info.sha256,
             })
         }),
-        // NOTE: phones don't offer files yet (MOBILE_PLAN Phase 5), so there's
-        // nothing to look up and every fetch from them is refused.
-        lookup_offer: Arc::new(|_| None),
+        lookup_offer: Arc::new(move |offer_id| offers::find(&offers_path, offer_id)),
         on_pairing: Arc::new(move |event| {
             pairing_to.on_pairing_event(match event {
                 service::PairingEvent::CodeShown { code } => PairingEvent::CodeShown { code },
@@ -1085,6 +1139,43 @@ mod tests {
             panic!("expected a file offer");
         };
         (phone, file, owner_dir)
+    }
+
+    #[tokio::test]
+    async fn file_offered_by_a_phone_is_fetched_intact() {
+        let (a, mut b) = paired_devices().await;
+        let source = a.dir.path().join("notes.txt");
+        std::fs::write(&source, b"from the phone").unwrap();
+        a.node
+            .offer_file(source.to_string_lossy().to_string(), "text/plain".into())
+            .await
+            .unwrap();
+        let Some(Event::Offer(file)) = next_event(&mut b).await else {
+            panic!("expected a file offer");
+        };
+        let downloads = tempfile::tempdir().unwrap();
+        let saved = b
+            .node
+            .fetch_file(
+                file,
+                downloads.path().to_string_lossy().to_string(),
+                Arc::new(Progress::default()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(saved).unwrap(), b"from the phone");
+    }
+
+    #[tokio::test]
+    async fn offering_a_missing_file_is_an_error() {
+        let (a, _b) = paired_devices().await;
+        let result = a
+            .node
+            .offer_file("/no/such/file.txt".into(), "text/plain".into())
+            .await;
+
+        assert!(matches!(result, Err(SyncNodeError::InvalidInput(_))));
     }
 
     #[tokio::test]
