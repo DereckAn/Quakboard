@@ -340,7 +340,7 @@ final class SyncModel: ObservableObject {
     private func send(text: String) async {
         guard let node, let store else { return }
         do {
-            try store.saveText(text, kind: .text)
+            try store.saveText(text, kind: HistoryItem.Kind(contentType: detectContentType(text: text)))
             reloadHistory()
             showToast(Self.sent(to: await node.sendText(text: text)))
         } catch {

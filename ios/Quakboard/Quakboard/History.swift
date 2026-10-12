@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import QuakboardSync
 
 struct HistoryItem: Codable, Identifiable, Sendable, FetchableRecord, MutablePersistableRecord {
     /// The desktop's content types for text, plus images.
@@ -67,6 +68,17 @@ final class History: Sendable {
         migrator.registerMigration("v2: pinning") { db in
             try db.alter(table: HistoryItem.databaseTableName) { t in
                 t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
+            }
+        }
+        migrator.registerMigration("v3: detect text types") { db in
+            // Clips sent from this device used to be saved as plain text.
+            let rows = try Row.fetchAll(db, sql: "SELECT id, text FROM item WHERE kind = 'text'")
+            for row in rows {
+                guard let text: String = row["text"] else { continue }
+                let kind = HistoryItem.Kind(contentType: detectContentType(text: text))
+                if kind != .text {
+                    try db.execute(sql: "UPDATE item SET kind = ? WHERE id = ?", arguments: [kind.rawValue, row["id"]])
+                }
             }
         }
         try migrator.migrate(db)

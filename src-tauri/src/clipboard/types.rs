@@ -1,30 +1,5 @@
+pub use quakboard_sync::content::detect_content_type;
 use std::collections::HashMap;
-
-/// Detecta el tipo de contenido basado en el texto
-pub fn detect_content_type(text: &str) -> String {
-    // URL detection
-    if text.starts_with("http://") || text.starts_with("https://") {
-        return "link".to_string();
-    }
-
-    // Color detection (hex, rgb, rgba, hsl)
-    if is_color(text) {
-        return "color".to_string();
-    }
-
-    // SVG detection (before code detection to avoid false positives)
-    if is_svg(text) {
-        return "svg".to_string();
-    }
-
-    // Code detection (simple heuristic)
-    if is_code(text) {
-        return "code".to_string();
-    }
-
-    // Default to text
-    "text".to_string()
-}
 
 /// Detecta el lenguaje de programación usando scoring system
 pub fn detect_code_language(text: &str) -> Option<String> {
@@ -335,92 +310,6 @@ pub fn detect_code_language(text: &str) -> Option<String> {
         .filter(|(_, score)| *score >= 5)
         .max_by_key(|(_, score)| *score)
         .map(|(lang, _)| lang.to_string())
-}
-
-fn is_svg(text: &str) -> bool {
-    let trimmed = text.trim();
-
-    // Check if starts with <svg or <?xml and contains <svg
-    if trimmed.starts_with("<svg") {
-        return true;
-    }
-
-    // Check for XML declaration with SVG
-    if trimmed.starts_with("<?xml") && trimmed.contains("<svg") {
-        return true;
-    }
-
-    false
-}
-
-fn is_color(text: &str) -> bool {
-    let trimmed = text.trim();
-
-    // Hex color
-    if trimmed.starts_with('#') && (trimmed.len() == 7 || trimmed.len() == 9) {
-        return trimmed[1..].chars().all(|c| c.is_ascii_hexdigit());
-    }
-
-    // RGB/RGBA
-    if trimmed.starts_with("rgb(") || trimmed.starts_with("rgba(") {
-        return true;
-    }
-
-    // HSL/HSLA
-    if trimmed.starts_with("hsl(") || trimmed.starts_with("hsla(") {
-        return true;
-    }
-
-    // OKLCH
-    if trimmed.starts_with("oklch(") {
-        return true;
-    }
-
-    false
-}
-
-fn is_code(text: &str) -> bool {
-    // Simple heuristics for code detection
-    let code_indicators = [
-        "function ",
-        "const ",
-        "let ",
-        "var ",
-        "class ",
-        "import ",
-        "export ",
-        "def ",
-        "print(",
-        "console.log",
-        "public ",
-        "private ",
-        "protected ",
-        "<?php",
-        "#!/",
-        "<script",
-        "</",
-        "/>",
-        "=>",
-        "fn ",
-        "impl ",
-        "struct ",
-        "{",
-        "}",
-        ";",
-        "package ",
-        "interface ",
-        "func ",
-        "using ",
-        "namespace ",
-    ];
-
-    let indicator_count = code_indicators
-        .iter()
-        .filter(|indicator| text.contains(*indicator))
-        .count();
-
-    // If has 2+ code indicators, likely code
-    indicator_count >= 2
 }
 
 /// Get source app name (placeholder - requires platform-specific implementation)

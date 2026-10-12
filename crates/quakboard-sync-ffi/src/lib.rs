@@ -113,6 +113,13 @@ pub fn discovery_id_key() -> String {
     quakboard_sync::discovery::ID_PROPERTY.into()
 }
 
+/// What kind of text this is, the same way the desktop decides: `link`,
+/// `color`, `svg`, `code` or `text`.
+#[uniffi::export]
+pub fn detect_content_type(text: String) -> String {
+    quakboard_sync::content::detect_content_type(&text)
+}
+
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum PairingEvent {
     /// Another device asked to pair: show this code, to type over there.
@@ -284,12 +291,13 @@ impl SyncNode {
         *lock(&self.nearby) = parsed;
     }
 
-    /// Send text to every paired device. Returns how many it reached.
+    /// Send text to every paired device, labeled with its detected type
+    /// (see `detect_content_type`). Returns how many it reached.
     pub async fn send_text(&self, text: String) -> u32 {
         let service = self.service.clone();
         let clip = ClipPayload {
+            content_type: detect_content_type(text.clone()),
             text,
-            content_type: "text".into(),
         };
         let reached = run(async move { service.send_clip(clip).await })
             .await
@@ -726,6 +734,17 @@ mod tests {
         assert_eq!(
             next_event(&mut b).await,
             Some(Event::Text("hello phone".into(), "text".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn sent_text_is_labeled_with_its_type() {
+        let (a, mut b) = paired_devices().await;
+        a.node.send_text("https://example.com".into()).await;
+
+        assert_eq!(
+            next_event(&mut b).await,
+            Some(Event::Text("https://example.com".into(), "link".into()))
         );
     }
 
