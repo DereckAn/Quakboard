@@ -47,10 +47,11 @@ final class SyncModel: ObservableObject {
     }
     @Published private(set) var toast: Toast?
 
-    // The simulator shares the Mac's network, where the desktop app already
-    // listens on the default port.
+    // Simulators share the Mac's network, where the desktop app already
+    // listens on the default port; iPhone and iPad simulators get their own,
+    // so one of each can run at once.
     #if targetEnvironment(simulator)
-    static let port = defaultSyncPort() + 1
+    static let port = defaultSyncPort() + (UIDevice.current.userInterfaceIdiom == .pad ? 2 : 1)
     #else
     static let port = defaultSyncPort()
     #endif
@@ -92,7 +93,7 @@ final class SyncModel: ObservableObject {
             identity = node.identity()
             peers = node.peers()
         } catch {
-            syncProblem = error.localizedDescription
+            syncProblem = Self.message(error)
             return
         }
         if isSyncEnabled {
@@ -123,7 +124,7 @@ final class SyncModel: ObservableObject {
             try node?.pairWithAddress(address: address)
             pairing = .enteringCode
         } catch {
-            showToast(error.localizedDescription, isError: true)
+            showToast(Self.message(error), isError: true)
         }
     }
 
@@ -132,7 +133,7 @@ final class SyncModel: ObservableObject {
             try node?.pairWithDevice(deviceId: id)
             pairing = .enteringCode
         } catch {
-            showToast(error.localizedDescription, isError: true)
+            showToast(Self.message(error), isError: true)
         }
     }
 
@@ -142,7 +143,7 @@ final class SyncModel: ObservableObject {
             try node?.submitPairingCode(code: code)
         } catch {
             pairing = nil
-            showToast(error.localizedDescription, isError: true)
+            showToast(Self.message(error), isError: true)
         }
     }
 
@@ -157,7 +158,7 @@ final class SyncModel: ObservableObject {
             refreshDevices()
             showToast("Unpaired \(peer.name)")
         } catch {
-            showToast(error.localizedDescription, isError: true)
+            showToast(Self.message(error), isError: true)
         }
     }
 
@@ -197,7 +198,7 @@ final class SyncModel: ObservableObject {
             try store.setPinned(id, !item.isPinned)
             reloadHistory()
         } catch {
-            showToast(error.localizedDescription, isError: true)
+            showToast(Self.message(error), isError: true)
         }
     }
 
@@ -208,7 +209,7 @@ final class SyncModel: ObservableObject {
             reloadHistory()
             showToast("Deleted")
         } catch {
-            showToast(error.localizedDescription, isError: true)
+            showToast(Self.message(error), isError: true)
         }
     }
 
@@ -228,7 +229,7 @@ final class SyncModel: ObservableObject {
         do {
             page = try store.page(search: search, kind: filter)
         } catch {
-            showToast(error.localizedDescription, isError: true)
+            showToast(Self.message(error), isError: true)
         }
     }
 
@@ -239,7 +240,7 @@ final class SyncModel: ObservableObject {
             reloadHistory()
             showToast(Self.sent(to: await node.sendText(text: text)))
         } catch {
-            showToast(error.localizedDescription, isError: true)
+            showToast(Self.message(error), isError: true)
         }
     }
 
@@ -250,7 +251,7 @@ final class SyncModel: ObservableObject {
             reloadHistory()
             showToast(Self.sent(to: try await node.sendImage(png: png)))
         } catch {
-            showToast(error.localizedDescription, isError: true)
+            showToast(Self.message(error), isError: true)
         }
     }
 
@@ -259,6 +260,18 @@ final class SyncModel: ObservableObject {
         case 0: "Saved, but no paired device was reached"
         case 1: "Sent to 1 device"
         default: "Sent to \(reached) devices"
+        }
+    }
+
+    /// The text to show for an error. The generated bindings describe sync
+    /// errors with their debug form (`SyncNodeError.Network(message: …)`), so
+    /// those show just their message.
+    private static func message(_ error: Error) -> String {
+        switch error as? SyncNodeError {
+        case .Storage(let message), .Network(let message), .InvalidInput(let message), .Fetch(let message):
+            message
+        case nil:
+            error.localizedDescription
         }
     }
 
@@ -292,7 +305,7 @@ final class SyncModel: ObservableObject {
             try await node.start()
             syncProblem = nil
         } catch {
-            syncProblem = "Couldn't start sync: \(error.localizedDescription)"
+            syncProblem = "Couldn't start sync: \(Self.message(error))"
             return
         }
         discovery = Discovery(
@@ -352,7 +365,7 @@ final class SyncModel: ObservableObject {
     }
 
     fileprivate func failedToSave(_ error: Error) {
-        showToast("Couldn't save to history: \(error.localizedDescription)", isError: true)
+        showToast("Couldn't save to history: \(Self.message(error))", isError: true)
     }
 }
 
