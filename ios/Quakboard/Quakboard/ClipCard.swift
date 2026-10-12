@@ -6,8 +6,11 @@ struct ClipCard: View {
     let item: HistoryItem
     let imageURL: URL?
     var isSelected = false
+    /// For a file clip.
+    var fileState: SyncModel.FileState?
     let onCopy: () -> Void
     let onTogglePin: () -> Void
+    var onFileAction: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -18,7 +21,14 @@ struct ClipCard: View {
                     .font(.caption2.monospaced())
                     .foregroundStyle(Theme.textMuted)
                 Spacer()
-                copyButton
+                if let fileState {
+                    Button(action: onFileAction) {
+                        Label(fileState.actionTitle, systemImage: fileState.actionImage)
+                    }
+                    .buttonStyle(ThemeButtonStyle(isPrimary: fileState == .remote))
+                } else {
+                    copyButton
+                }
             }
         }
         .card(item.isPinned ? Theme.cardRaised : Theme.card)
@@ -117,6 +127,31 @@ struct ClipCard: View {
                 .foregroundStyle(Theme.text)
                 .lineLimit(4)
                 .insetBlock()
+        case .file:
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    Image(systemName: "doc.fill")
+                        .font(.title3)
+                        .foregroundStyle(Theme.accentText)
+                        .frame(width: 40, height: 40)
+                        .background(Theme.cardRaised, in: RoundedRectangle(cornerRadius: 10))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(2)
+                        Text((fileState ?? .remote).status(origin: item.fromName))
+                            .font(.caption)
+                            .foregroundStyle(Theme.textMuted)
+                    }
+                }
+                if case .fetching(let fraction) = fileState {
+                    ProgressView(value: fraction)
+                        .tint(Theme.accentText)
+                }
+            }
+            .insetBlock()
         }
     }
 

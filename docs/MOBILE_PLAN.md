@@ -271,7 +271,8 @@ Built on `feat/build-ios` and `feat/listener`. Where it differs from the plan ab
    - **Devices are keyed by the `id` in their TXT record,** because Bonjour can rename a re-announced service (`id (2)`) and list one device many times.
    - **LAN addresses win over link-local (169.254.x) and loopback,** on the phone and in the core's `pick_address`, which the desktop uses.
 4. **History uses GRDB, not SwiftData,** to keep iOS 16.
-   - **What's stored:** text with the desktop's type (`on_text` gained `content_type` in the FFI), images as PNG files, and pins.
+   - **What's stored:** text with its type, images as PNG files, and pins.
+   - **Type detection is shared:** the desktop's `detect_content_type` moved into the core (`content.rs`). The FFI's `send_text` sends the detected type, and the app uses it for what it sends. A migration relabeled text saved before that.
    - **Duplicates:** a repeated text moves to the top and keeps its pin.
    - **Limits:** the newest 500 unpinned items, with no paging (marked `ponytail:`); search with `LIKE`.
    - **Delete** removes the clip and its image file.

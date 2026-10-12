@@ -1,3 +1,4 @@
+import QuickLook
 import SwiftUI
 
 struct ContentView: View {
@@ -23,6 +24,7 @@ struct ContentView: View {
         .tint(Theme.accentText)
         .overlay(alignment: .top) { toast }
         .animation(.default, value: model.toast)
+        .quickLookPreview($model.previewURL)
         .preferredColorScheme(appearance.colorScheme)
         .task { await model.start() }
     }

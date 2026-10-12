@@ -35,8 +35,10 @@ struct ClipList: View {
             item: item,
             imageURL: model.imageURL(of: item),
             isSelected: item.id != nil && item.id == selectedID,
+            fileState: model.fileState(of: item),
             onCopy: { model.copy(item) },
-            onTogglePin: { model.togglePin(item) }
+            onTogglePin: { model.togglePin(item) },
+            onFileAction: { model.fileAction(item) }
         )
         .contentShape(Rectangle())
         .onTapGesture { onOpen(item) }

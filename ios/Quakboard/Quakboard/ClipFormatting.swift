@@ -33,6 +33,7 @@ extension HistoryItem {
         case .code: "Code"
         case .color: (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         case .image: "Image"
+        case .file: fileName ?? "File"
         }
     }
 
@@ -43,6 +44,7 @@ extension HistoryItem {
         case .code: "Code"
         case .color: "Color"
         case .image: "PNG image"
+        case .file: fileMime ?? "File"
         }
     }
 
@@ -54,6 +56,8 @@ extension HistoryItem {
         switch kind {
         case .image:
             return "PNG"
+        case .file:
+            return ByteCountFormatter.string(fromByteCount: fileSize ?? 0, countStyle: .file)
         case .code:
             let lines = trimmedText.split(separator: "\n", omittingEmptySubsequences: false).count
             return "\(lines) lines • \((text ?? "").utf8.count) bytes"
@@ -65,7 +69,7 @@ extension HistoryItem {
 
 extension HistoryItem.Kind {
     /// The order of the filter chips and the iPad sidebar's types.
-    static let filterOrder: [Self] = [.link, .code, .color, .image, .text]
+    static let filterOrder: [Self] = [.link, .code, .color, .image, .file, .text]
 
     var pluralTitle: String {
         switch self {
@@ -74,6 +78,7 @@ extension HistoryItem.Kind {
         case .code: "Code"
         case .color: "Colors"
         case .image: "Images"
+        case .file: "Files"
         }
     }
 
@@ -84,6 +89,33 @@ extension HistoryItem.Kind {
         case .code: "curlybraces"
         case .color: "paintpalette"
         case .image: "photo"
+        case .file: "doc"
+        }
+    }
+}
+
+extension SyncModel.FileState {
+    var actionTitle: String {
+        switch self {
+        case .remote: "Fetch"
+        case .fetching: "Cancel"
+        case .saved: "Open"
+        }
+    }
+
+    var actionImage: String {
+        switch self {
+        case .remote: "arrow.down.circle"
+        case .fetching: "xmark"
+        case .saved: "eye"
+        }
+    }
+
+    func status(origin: String?) -> String {
+        switch self {
+        case .remote: "On \(origin ?? "another device")"
+        case .fetching(let fraction): "Downloading… \(Int(fraction * 100))%"
+        case .saved: "Saved in Files"
         }
     }
 }
