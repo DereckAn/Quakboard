@@ -132,12 +132,15 @@ fn track(devices: &Mutex<HashMap<String, DiscoveredDevice>>, own_id: &str, event
     }
 }
 
-/// Prefer a real network address: a device can advertise 127.0.0.1 too, and
-/// that only reaches it from the same machine. Lowest wins, for stability.
+/// Prefer a real network address. A device can also advertise 169.254.x.x,
+/// which only works over a direct link between two devices, and 127.0.0.1,
+/// which only reaches it from the same machine. Lowest wins within a kind,
+/// for stability.
 #[cfg(feature = "mdns")]
 fn pick_address(addresses: impl IntoIterator<Item = Ipv4Addr>) -> Option<Ipv4Addr> {
-    let (loopback, lan): (Vec<_>, Vec<_>) = addresses.into_iter().partition(Ipv4Addr::is_loopback);
-    lan.into_iter().min().or_else(|| loopback.into_iter().min())
+    addresses
+        .into_iter()
+        .min_by_key(|ip| (ip.is_loopback(), ip.is_link_local(), *ip))
 }
 
 /// The "#ab12" suffix shown for devices that aren't paired yet.
@@ -232,6 +235,24 @@ mod tests {
             "192.168.18.244".parse().unwrap(),
         ]);
         assert_eq!(picked, Some("192.168.18.244".parse().unwrap()));
+    }
+
+    #[test]
+    fn lan_address_is_preferred_over_link_local() {
+        let picked = pick_address([
+            "169.254.173.113".parse().unwrap(),
+            "192.168.1.67".parse().unwrap(),
+        ]);
+        assert_eq!(picked, Some("192.168.1.67".parse().unwrap()));
+    }
+
+    #[test]
+    fn link_local_is_preferred_over_loopback() {
+        let picked = pick_address([
+            "127.0.0.1".parse().unwrap(),
+            "169.254.173.113".parse().unwrap(),
+        ]);
+        assert_eq!(picked, Some("169.254.173.113".parse().unwrap()));
     }
 
     #[test]
