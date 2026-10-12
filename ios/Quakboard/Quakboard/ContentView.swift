@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var model = SyncModel()
+    @ObservedObject var model: SyncModel
     @AppStorage(Appearance.storageKey) private var appearance = Appearance.system
     @Environment(\.horizontalSizeClass) private var sizeClass
 

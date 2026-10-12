@@ -235,13 +235,21 @@ Built on `feat/build-ios`. Where it differs from the steps above, this section i
 - **Devices:** the same flows as desktop. A sync toggle, this device's name and IP, paired devices with Unpair, nearby devices with Pair, Connect by IP, and the code-entry and code-display sheets.
 - **Paste & Send:** a `UIPasteControl` button that sends the clipboard to paired devices. No prompt, since the user tapped a system paste button.
 
+**Sending what was copied in another app:** iOS never lets an app read the clipboard in the background, or even learn that it changed, so copying in WhatsApp can't be caught on its own. These cover it, from least to most effort for the user:
+- **The Share Extension** (below): WhatsApp → Share → Quakboard, without opening the app.
+- **"You copied something" banner (built):** when the app comes to the front, it checks the clipboard's `changeCount` and `hasStrings`/`hasImages`. Those don't read the content, so iOS shows no prompt. If something new is there, a banner offers the Paste button. The app's own writes (received text, Copy) are marked as seen, so they're never offered back.
+- **Automatic send on open (planned, opt-in):** a Settings switch, "Send new copies when Quakboard opens". It reads the clipboard in code, which shows "Allow Paste?" each time unless the user sets **Settings → Quakboard → Paste from Other Apps → Allow**. The switch explains that, and stays off by default, since it sends without a tap.
+
 **The Share Extension ("Share to Quakboard"):**
-- A separate target that accepts text, URLs and images from any app's share sheet.
+- A separate target that accepts text, URLs and images from any app's share sheet, such as a WhatsApp message (long-press → Share → Quakboard) or a Safari page.
 - It sends them through `SyncNode` and closes. iOS gives extensions limited memory and time, so it sends and exits rather than listening.
 
 **Receiving:**
 - While the app is open, received text and images go into history. Text is copied to `UIPasteboard`, the same as the desktop. Images go to history, with a "Copy" button.
-- When the app is backgrounded, it stops listening cleanly. Desktops see it as offline, the same as a closed laptop today.
+- When the app is backgrounded, it keeps receiving for a **25-second grace period** (`beginBackgroundTask`; iOS allows about 30), so a transfer finishes and something copied on the desktop right after switching apps still arrives. Then it stops listening and advertising cleanly. Desktops see it as offline, the same as a closed laptop today.
+- Coming back to the front restarts sync and discovery at once.
+- **Built:** both of the above, on `feat/listener`. All iPad windows share one sync node; the app counts as backgrounded only when every window is.
+- Receiving while the app is closed for longer needs push notifications and a server (see "Later"). No background mode fits a clipboard listener, and App Review rejects using location or audio only to stay awake.
 
 **App Store notes:** explain the local-network permission and the clipboard use in the review notes.
 

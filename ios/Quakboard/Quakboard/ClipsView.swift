@@ -11,6 +11,9 @@ struct ClipsView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
+                    if model.hasNewClipboard && !isPinnedOnly {
+                        ClipboardOfferBanner(model: model)
+                    }
                     chips
                     ClipList(model: model, isPinnedOnly: isPinnedOnly) { opened = $0 }
                 }

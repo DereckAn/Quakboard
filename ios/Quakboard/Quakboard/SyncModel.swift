@@ -27,7 +27,13 @@ final class SyncModel: ObservableObject {
     private enum Keys {
         static let isSyncEnabled = "isSyncEnabled"
         static let isSyncingImages = "isSyncingImages"
+        static let seenPasteboardChange = "seenPasteboardChange"
     }
+
+    /// How long sync keeps running after the app leaves the screen, so a
+    /// transfer can finish and a quick copy elsewhere still arrives. iOS
+    /// grants roughly 30 seconds of background time; this stays under it.
+    private static let backgroundGrace = Duration.seconds(25)
 
     @Published private(set) var identity: DeviceIdentity?
     @Published private(set) var peers: [PeerInfo] = []
@@ -46,6 +52,8 @@ final class SyncModel: ObservableObject {
         didSet { reloadHistory() }
     }
     @Published private(set) var toast: Toast?
+    /// Something new is on the clipboard that the user might want to send.
+    @Published private(set) var hasNewClipboard = false
 
     // Simulators share the Mac's network, where the desktop app already
     // listens on the default port; iPhone and iPad simulators get their own,
@@ -64,6 +72,13 @@ final class SyncModel: ObservableObject {
     private var toastTask: Task<Void, Never>?
     /// The latest start or stop; each waits for the one before.
     private var syncTask: Task<Void, Never>?
+    /// False while every window is in the background. iOS suspends the app
+    /// there, so sync stops instead of leaving a listener nobody answers.
+    private var isAppActive = true
+    private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+    private var graceTask: Task<Void, Never>?
+    /// The clipboard's change count last offered, sent or written by us.
+    private var seenPasteboardChange = UserDefaults.standard.integer(forKey: Keys.seenPasteboardChange)
 
     func start() async {
         guard node == nil else { return }
@@ -99,6 +114,7 @@ final class SyncModel: ObservableObject {
         if isSyncEnabled {
             applySyncSetting()
         }
+        checkClipboard()
     }
 
     func setSyncEnabled(_ isEnabled: Bool) {
@@ -147,6 +163,38 @@ final class SyncModel: ObservableObject {
         }
     }
 
+    /// After a short grace period in the background, sync stops and desktops
+    /// see this device as offline, like a closed laptop. Coming back starts
+    /// sync and discovery again right away.
+    func setAppActive(_ isActive: Bool) {
+        guard isActive != isAppActive else { return }
+        isAppActive = isActive
+        if isActive {
+            endGracePeriod()
+            applySyncSetting()
+            checkClipboard()
+        } else {
+            if pairing != nil {
+                cancelPairing()
+            }
+            beginGracePeriod()
+        }
+    }
+
+    /// Without reading it: iOS only says whether the clipboard changed and
+    /// holds text or an image, which needs no "Allow Paste?" prompt.
+    func checkClipboard() {
+        let pasteboard = UIPasteboard.general
+        hasNewClipboard = pasteboard.changeCount != seenPasteboardChange
+            && (pasteboard.hasStrings || pasteboard.hasImages)
+            && isSyncEnabled
+            && !peers.isEmpty
+    }
+
+    func dismissClipboardOffer() {
+        markClipboardSeen()
+    }
+
     func cancelPairing() {
         node?.cancelPairing()
         pairing = nil
@@ -169,6 +217,7 @@ final class SyncModel: ObservableObject {
             return
         }
         guard let provider = providers.first else { return }
+        markClipboardSeen()
         if provider.canLoadObject(ofClass: UIImage.self) {
             _ = provider.loadObject(ofClass: UIImage.self) { [weak self] image, _ in
                 // Encoded here, off the main thread.
@@ -189,6 +238,7 @@ final class SyncModel: ObservableObject {
         } else if let text = item.text {
             UIPasteboard.general.string = text
         }
+        markClipboardSeen()
         showToast("Copied to clipboard")
     }
 
@@ -285,13 +335,48 @@ final class SyncModel: ObservableObject {
         }
     }
 
-    /// Starts and stops run one at a time, each applying the switch as it is
-    /// when its turn comes, so quick toggles end in the last state chosen.
+    private func markClipboardSeen() {
+        seenPasteboardChange = UIPasteboard.general.changeCount
+        UserDefaults.standard.set(seenPasteboardChange, forKey: Keys.seenPasteboardChange)
+        hasNewClipboard = false
+    }
+
+    /// Keeps sync running for `backgroundGrace`, with iOS's permission, then
+    /// stops it.
+    private func beginGracePeriod() {
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Keep receiving") { [weak self] in
+            // iOS is ending the background time early: stop right now.
+            MainActor.assumeIsolated {
+                self?.stopSync()
+                self?.endGracePeriod()
+            }
+        }
+        graceTask = Task {
+            try? await Task.sleep(for: Self.backgroundGrace)
+            guard !Task.isCancelled else { return }
+            applySyncSetting()
+            await syncTask?.value
+            endGracePeriod()
+        }
+    }
+
+    private func endGracePeriod() {
+        graceTask?.cancel()
+        graceTask = nil
+        if backgroundTask != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
+        }
+    }
+
+    /// Starts and stops run one at a time, each applying the Sync switch and
+    /// whether the app is in front as they are when its turn comes, so quick
+    /// toggles and app switches end in the latest state.
     private func applySyncSetting() {
         let previous = syncTask
         syncTask = Task {
             await previous?.value
-            if isSyncEnabled {
+            if isSyncEnabled && isAppActive {
                 await startSync()
             } else {
                 stopSync()
@@ -357,6 +442,8 @@ final class SyncModel: ObservableObject {
 
     fileprivate func received(text: String) {
         UIPasteboard.general.string = text
+        // Our own write: not something to offer to send back.
+        markClipboardSeen()
         reloadHistory()
     }
 
