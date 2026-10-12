@@ -40,10 +40,8 @@ pub fn generate_thumbnail(path: &Path, target_path: &Path) -> Result<bool, Strin
         if generate_text_thumbnail(path, target_path)? {
             return Ok(true);
         }
-    } else if is_video(path) {
-        if generate_video_thumbnail(path, target_path)? {
-            return Ok(true);
-        }
+    } else if is_video(path) && generate_video_thumbnail(path, target_path)? {
+        return Ok(true);
     }
 
     Ok(false)

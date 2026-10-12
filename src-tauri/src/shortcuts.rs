@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
+#[cfg(target_os = "macos")]
 use crate::clipboard::state::store_previous_app_pid;
 use crate::commands::lab::{capture_screenshot_core, CaptureMode};
 use crate::AppState;
@@ -78,6 +79,8 @@ pub fn register_shortcut(app: &AppHandle, shortcut_str: &str) -> Result<(), Stri
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyBackend {
     GlobalShortcut,
+    // Only detected on Linux, but matched in shared code on every platform.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Hyprland,
 }
 
@@ -317,13 +320,13 @@ fn register_single_screenshot_shortcut(
     println!("Parsed {} shortcut: {:?}", label, shortcut);
 
     // Unregister if already registered
-    if manager.is_registered(shortcut.clone()) {
+    if manager.is_registered(shortcut) {
         println!(
             "{} shortcut already registered, unregistering first...",
             label
         );
         manager
-            .unregister(shortcut.clone())
+            .unregister(shortcut)
             .map_err(|e| format!("Failed to unregister {} shortcut: {}", label, e))?;
     }
 
@@ -333,7 +336,7 @@ fn register_single_screenshot_shortcut(
     let label_owned = label.to_string();
 
     manager
-        .on_shortcut(shortcut.clone(), move |_app, shortcut, event| {
+        .on_shortcut(shortcut, move |_app, _shortcut, event| {
             if event.state() == ShortcutState::Pressed {
                 println!(">>> {} screenshot hotkey PRESSED!", label_owned);
 

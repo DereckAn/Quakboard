@@ -94,46 +94,20 @@ const GITHUB_REPO: &str = "DereckAn/quakboard";
 
 /// Determina el sufijo del artifact según OS y arquitectura
 fn get_platform_suffix() -> Option<&'static str> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    {
-        return Some("macos-arm64");
-    }
-
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    {
-        return Some("macos-x64");
-    }
-
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    {
-        return Some("linux-arm64");
-    }
-
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    {
-        return Some("linux-x64");
-    }
-
-    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-    {
-        return Some("windows-arm64");
-    }
-
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    {
-        return Some("windows-x64");
-    }
-
-    #[cfg(not(any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "macos", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64"),
-        all(target_os = "windows", target_arch = "aarch64"),
-        all(target_os = "windows", target_arch = "x86_64"),
-    )))]
-    {
-        return None;
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        Some("macos-arm64")
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        Some("macos-x64")
+    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+        Some("linux-arm64")
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        Some("linux-x64")
+    } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+        Some("windows-arm64")
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        Some("windows-x64")
+    } else {
+        None
     }
 }
 
@@ -839,11 +813,6 @@ fn run_region_capture_with_helper(
             println!("  - {}", entry.path().display());
             if let Ok(metadata) = entry.metadata() {
                 println!("    Size: {} bytes", metadata.len());
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    // println!("    Permissions: {:o}", metadata.permissions().mode());
-                }
             }
         }
     }

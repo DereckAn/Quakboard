@@ -3,7 +3,6 @@
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -200,6 +199,10 @@ impl SyncRuntime {
     pub fn cancel_pairing(&self) {
         // Dropping the sender makes the waiting pairing end as cancelled.
         lock(&self.pending_code).take();
+        // And a code shown for an incoming pairing stops working.
+        if let Some(service) = self.service() {
+            service.cancel_responding();
+        }
     }
 }
 

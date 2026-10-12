@@ -112,6 +112,9 @@ pub struct SyncService {
     /// One pairing at a time, so a device on the LAN can't stack up prompts.
     is_pairing: AtomicBool,
     accepts_pairing: AtomicBool,
+    /// Held while this device shows a code for an incoming pairing; taking
+    /// it (dropping the sender) abandons that pairing.
+    responding: Mutex<Option<oneshot::Sender<()>>>,
     /// The user's "Also sync images" setting; covers sending and receiving.
     syncs_images: AtomicBool,
     /// Text of the last received clip. Writing it to the clipboard makes the
@@ -139,6 +142,7 @@ impl SyncService {
             listen_port,
             is_pairing: AtomicBool::new(false),
             accepts_pairing: AtomicBool::new(false),
+            responding: Mutex::new(None),
             syncs_images: AtomicBool::new(true),
             last_received: Mutex::new(None),
             last_received_image: Mutex::new(None),
@@ -383,6 +387,12 @@ impl SyncService {
         self.accepts_pairing.store(accepting, Ordering::SeqCst);
     }
 
+    /// Abandon the incoming pairing whose code is on screen, so the code
+    /// stops working once the user closes it. It ends as cancelled.
+    pub fn cancel_responding(&self) {
+        lock(&self.responding).take();
+    }
+
     pub fn set_syncing_images(&self, enabled: bool) {
         self.syncs_images.store(enabled, Ordering::SeqCst);
     }
@@ -454,11 +464,18 @@ impl SyncService {
                 let (id, name) = self.identity();
                 let me = self.local_device(&id, &name);
                 let on_pairing = self.hooks.on_pairing.clone();
-                let result =
+                let (cancel_tx, cancelled) = oneshot::channel::<()>();
+                *lock(&self.responding) = Some(cancel_tx);
+                let respond =
                     pairing::respond(&mut stream, &me, from, protocol, addr.ip(), |code| {
                         on_pairing(PairingEvent::CodeShown { code })
-                    })
-                    .await;
+                    });
+                let result = tokio::select! {
+                    result = respond => result,
+                    // `cancel_responding` drops the sender.
+                    _ = cancelled => Err(PairError::Cancelled),
+                };
+                lock(&self.responding).take();
                 // Errors are already reported to the UI through the hook.
                 let _ = self.finish_pairing(result);
             }
@@ -1787,6 +1804,45 @@ mod tests {
                 name: format!("{A_ID} name"),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn responder_reports_a_cancelled_code() {
+        let a = unpaired_device(A_ID).await;
+        let mut b = unpaired_device(B_ID).await;
+        let (_code_tx, code_rx) = oneshot::channel();
+        let (service, addr) = (a.service.clone(), b.addr.to_string());
+        tokio::spawn(async move { service.pair_with(&addr, code_rx).await });
+        let PairingEvent::CodeShown { .. } = next_event(&mut b).await else {
+            panic!("expected a code");
+        };
+        b.service.cancel_responding();
+
+        assert_eq!(
+            next_event(&mut b).await,
+            PairingEvent::Failed {
+                reason: "pairing was cancelled".into(),
+                needs_update: false,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_code_no_longer_pairs() {
+        let a = unpaired_device(A_ID).await;
+        let mut b = unpaired_device(B_ID).await;
+        let (code_tx, code_rx) = oneshot::channel();
+        let (service, addr) = (a.service.clone(), b.addr.to_string());
+        let initiator = tokio::spawn(async move { service.pair_with(&addr, code_rx).await });
+        let PairingEvent::CodeShown { code } = next_event(&mut b).await else {
+            panic!("expected a code");
+        };
+        b.service.cancel_responding();
+        let _ = next_event(&mut b).await;
+        code_tx.send(code).unwrap();
+        let _ = initiator.await;
+
+        assert!(lock(&b.service.store).peers.is_empty());
     }
 
     #[tokio::test]

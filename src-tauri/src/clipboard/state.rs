@@ -1,16 +1,22 @@
+#[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicI32;
 use std::sync::{
-    atomic::{AtomicBool, AtomicI32, Ordering},
+    atomic::{AtomicBool, Ordering},
     Mutex,
 };
 use std::time::{Duration, Instant};
 
 // AtomicI32 - a thread-safe integer. We us i32 (signed) so we can use -1 as "not set" value.
+// The app that was in front when the hotkey opened us, to give focus back on
+// paste. macOS only: elsewhere the focus returns on its own or through Wayland.
+#[cfg(target_os = "macos")]
+static PREVIOUS_APP_PID: AtomicI32 = AtomicI32::new(-1);
+
 // AtomicUsize - a thread-safe unsigned integer. We use usize for counting events to skip.
 
 // lazy_static! - creates global variables that are initialized once at first use.
 lazy_static::lazy_static! {
     static ref SKIP_EVENTS: Mutex<SkipWindow> = Mutex::new(SkipWindow::default());
-    static ref PREVIOUS_APP_PID: AtomicI32 = AtomicI32::new(-1);
     // When the capture-folder watcher owns screenshots, the clipboard monitor
     // skips saving raw screenshot bytes so we don't get a duplicate entry.
     static ref SUPPRESS_SCREENSHOT_BYTES: AtomicBool = AtomicBool::new(false);
@@ -53,6 +59,7 @@ pub fn should_suppress_screenshot_bytes() -> bool {
     SUPPRESS_SCREENSHOT_BYTES.load(Ordering::SeqCst)
 }
 
+#[cfg(target_os = "macos")]
 pub fn store_previous_app_pid(pid: i32) {
     PREVIOUS_APP_PID.store(pid, Ordering::SeqCst);
     // Syntax note: Ordering::SeqCst means "sequentially consistent" —
@@ -62,6 +69,7 @@ pub fn store_previous_app_pid(pid: i32) {
 
 // Take_previous_app_pid - reads the PID and resets it to -1 (so it can only be used once)
 // .swap() - Automatically replaces the value and returns the old one
+#[cfg(target_os = "macos")]
 pub fn take_previous_app_pid() -> i32 {
     PREVIOUS_APP_PID.swap(-1, Ordering::SeqCst)
 }
@@ -125,12 +133,14 @@ impl SkipWindow {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_store_previous_app_pid() {
         store_previous_app_pid(12345);
         assert_eq!(take_previous_app_pid(), 12345);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_take_previous_app_pid() {
         store_previous_app_pid(12345);

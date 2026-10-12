@@ -175,6 +175,7 @@
 
   function handleCancelPairing() {
     pairingWith = null;
+    shownCode = null;
     isSubmittingCode = false;
     tauriSyncPairCancel().catch((err) =>
       console.error("Failed to cancel pairing:", err),
@@ -475,7 +476,7 @@
 
 <Modal
   isOpen={shownCode !== null}
-  onClose={() => (shownCode = null)}
+  onClose={handleCancelPairing}
   title="Pairing request"
 >
   <div class="p-6 space-y-4 text-center">

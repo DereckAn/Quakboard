@@ -1,6 +1,6 @@
 # Plan: iPhone/iPad and Android apps
 
-**Status:** Phases 1 and 2 done (see [Phase 1](#what-was-built-in-phase-1) and [Phase 2](#what-was-built-in-phase-2)). Phase 3, on a Mac, is next.
+**Status:** Phases 1–3 done (see [Phase 1](#what-was-built-in-phase-1), [Phase 2](#what-was-built-in-phase-2) and [Phase 3](#what-was-built-in-phase-3)). Phase 4, the iOS app MVP, is next.
 
 ## Goal
 Quakboard on iPhone, iPad and later Android, syncing with the desktop app: text, images and files, using the same pairing and encryption.
@@ -198,6 +198,25 @@ Built on `feat/sync-ffi`. Where it differs from the sketch above, this section i
 3. **CI:** a macOS job builds the XCFramework on every PR that touches the core.
 4. **Check:** a tiny SwiftUI test app on the simulator pairs with the desktop over the LAN and shows the next copied text. **That's the moment the whole approach is proven.**
 
+### What was built in Phase 3
+Built on `feat/build-ios`. Where it differs from the steps above, this section is what's true.
+
+1. **Targets:** all three. `x86_64-apple-ios` is only the simulator on Intel Macs (the desktop app for Intel Macs is `x86_64-apple-darwin`, unrelated). It's merged with `aarch64-apple-ios-sim` into one simulator library with `lipo`.
+2. **`scripts/build-ios.sh`**, in this order:
+   - `cargo build --release` per target, with `IPHONEOS_DEPLOYMENT_TARGET=16.0`, sharing `src-tauri/target` with the desktop and CI.
+   - The Swift bindings, **before** the XCFramework, which needs their header. The module map is copied as `module.modulemap`, the only name the XCFramework picks up.
+   - `xcodebuild -create-xcframework` into `ios/QuakboardSync/QuakboardSyncFFI.xcframework`, and the generated Swift into `Sources/QuakboardSync/`. Both are gitignored; only `Package.swift` is committed.
+   - The FFI crate's `crate-type` gained `staticlib`.
+3. **The test app** is `ios/Quakboard` (iOS 16, iPhone and iPad, Swift 6). It grows into the Phase 4 app.
+   - The project uses Xcode's synchronized folders, so new `.swift` files in `ios/Quakboard/Quakboard/` are picked up without editing the project.
+   - `SyncModel` owns the `SyncNode` and moves the delegate's background-thread callbacks to the main actor.
+   - **In the simulator it listens on 47824,** because the simulator shares the Mac's network and the desktop app already has 47823. Pairing records the port, so the desktop reaches it there. Run one simulator at a time: a second one takes the port first and drops text it isn't paired for.
+4. **CI:** `.github/workflows/ios.yml`, on `macos-latest`, only when `crates/`, `ios/`, the script or the workflow change. It runs the script and builds the app for a generic simulator without signing.
+
+**Check:** passed. The simulator paired with the desktop on the same Mac (`127.0.0.1`) and text synced both ways.
+
+**Note:** after a Rust change, run `./scripts/build-ios.sh` before building in Xcode; Xcode doesn't run it.
+
 ## Phase 4: iOS app MVP (text and images)
 **Discovery (native, no special entitlement):**
 - Advertise with `NWListener` and find others with `NWBrowser`, using **Apple's Network framework** (Bonjour) for `_quakboard._tcp`.
@@ -208,6 +227,8 @@ Built on `feat/sync-ffi`. Where it differs from the sketch above, this section i
 **Storage:**
 - Pairing keys (`sync.json`) go in an **App Group** container, so the Share Extension can use them too, with Data Protection set to `complete`.
 - History lives in **SwiftData** (or GRDB/SQLite): text, images (as files), and remote file items.
+
+**Design:** the screens follow the owner's UI draft. Apply it before building the Devices screen, so it's built once.
 
 **Screens (SwiftUI):**
 - **History:** a list grouped by date like the desktop, with search, plus detail views for text, images and files.

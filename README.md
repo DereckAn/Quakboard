@@ -1,426 +1,206 @@
-# Global Clipboard Manager
+# Quakboard
 
 <div align="center">
-  <img src=".github/pato.webp" alt="Global Clipboard Icon" width=128 >
+  <img src=".github/pato.webp" alt="Quakboard icon" width="128">
 
-  <p><strong>A powerful, modern clipboard manager for macOS</strong></p>
+  <p><strong>A fast, private clipboard manager for macOS, Windows and Linux,<br>with encrypted sync to your other devices on the same network.</strong></p>
 
-  [![Built with Tauri](https://img.shields.io/badge/Built%20with-Tauri-FFC131?logo=tauri&logoColor=white)](https://tauri.app)
+  [![Latest release](https://img.shields.io/github/v/release/DereckAn/Quakboard)](https://github.com/DereckAn/Quakboard/releases/latest)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+  [![Built with Tauri](https://img.shields.io/badge/Built%20with-Tauri%20v2-FFC131?logo=tauri&logoColor=white)](https://tauri.app)
   [![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
-  [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
-  [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+  [![Rust](https://img.shields.io/badge/Rust-stable-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
 </div>
 
 ---
 
-## ✨ Features
+## Features
 
-### 🚀 Core Features
-- **⚡ Lightning Fast** - Built with Rust and native macOS APIs for optimal performance
-- **🎯 Smart Detection** - Automatically detects and categorizes clipboard content:
-  - 📝 Plain text
-  - 💻 Code snippets (with syntax detection for 20+ languages)
-  - 🎨 Colors (HEX, RGB, HSL, OKLCH formats)
-  - 🔗 URLs (with metadata preview)
-  - 📁 Files and images
-- **🔍 Powerful Search** - Find anything in your clipboard history instantly
-- **⭐ Favorites & Snippets** - Save frequently used items for quick access
-- **🎨 Beautiful UI** - Modern, dark-themed interface built with Svelte 5 and TailwindCSS v4
-- **📦 Infinite Scroll** - Efficient pagination loads 50-100 items at a time
-- **🔐 Privacy First** - All data stored locally in SQLite database
+### History
+- **Everything you copy, saved:** text, code, links, colors, images and files.
+- **Smart detection:** code (with its language), links (with title and preview), and colors (HEX, RGB, HSL, OKLCH, with conversion between them).
+- **Full-text search** across your whole history, with matches highlighted.
+- **Grouped by date:** Today, Yesterday, This Week, This Month, Older.
+- **Favorites**, and duplicates move to the top instead of piling up.
+- **Paste straight back:** pick an item and press Enter to paste it into the app you were using.
+- **Retention controls:** limit how many items are kept or for how long. Favorites are never deleted.
 
-### ⌨️ Productivity Features
-- **⌨️ Global Hotkeys** - Quick access from anywhere (customizable)
-- **🎯 Auto-Hide** - Window hides automatically when losing focus
-- **🔄 Duplicate Detection** - Prevents saving the same content multiple times
-- **📅 Date Grouping** - Items organized by Today, Yesterday, This Week, This Month, Older
-- **🎨 Syntax Highlighting** - Beautiful code preview with language detection
-- **🌈 Color Preview** - Visual color swatches with format conversion
+### Sync between your devices
+- **Pair once with a 6-digit code.** Devices on the same network find each other automatically, or you can connect by IP.
+- **Text and images sync as you copy.** Image sync can be turned off.
+- **Files are offered, not pushed:** send a file to a device, and it downloads only when you choose Fetch.
+- **No server and no account:** devices talk directly, encrypted end to end.
 
-### 🛠️ Advanced Features
-- **🔗 Link Metadata** - Fetches titles, descriptions, and images from URLs
-- **🌐 Domain Extraction** - Automatic domain detection for links
-- **🎨 Color Conversion** - Convert between HEX, RGB, HSL, HSV, OKLCH formats
-- **🔧 Clean Architecture** - Modular design following best practices
+### Desktop
+- **Global hotkey** to show or hide the window (default `Ctrl/Cmd + Shift + V`), changeable in Settings.
+- **Screenshots** (Lab feature): full-screen or region capture, straight to your history.
+- **Capture-folder watcher** (optional): new screenshots and recordings appear in history without being copied.
+- **Launch at login, tray icon and in-app updates.**
 
 ---
 
-## 📸 Screenshots
+## Screenshots
 
 <div align="center">
-  <img src=".github/app.png" alt="App in macOS Dock" width="500">
-  <p><em>Global Clipboard running in the macOS dock</em></p>
+  <img src=".github/app.png" alt="Quakboard on macOS" width="500">
 </div>
 
 ---
 
-## 🚀 Getting Started
+## Download
 
-### Prerequisites
+Get the latest version from **[Releases](https://github.com/DereckAn/Quakboard/releases/latest)**.
 
-- **macOS** 10.15+ (Catalina or later)
-- **Rust** 1.70 or later ([Install](https://rustup.rs))
-- **Bun** latest version ([Install](https://bun.sh))
-- **Xcode Command Line Tools** (`xcode-select --install`)
+| System | File |
+|---|---|
+| macOS (Apple Silicon) | `Quakboard-<version>-macOS-AppleSilicon.dmg` |
+| macOS (Intel) | `Quakboard-<version>-macOS-Intel.dmg` |
+| Windows (x64 / ARM64) | `Quakboard-<version>-Windows-<arch>-Setup.exe` or `.msi` |
+| Linux (x64 / ARM64) | `.deb`, `.rpm` or `.AppImage` |
+| Arch Linux | `packaging/arch/PKGBUILD` (see [its README](packaging/arch/README.md)) |
 
-### Installation
+Once installed, Quakboard checks for new versions and offers to install them.
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/dereckan/global_clipboard.git
-   cd global_clipboard
-   ```
+> **Arch Linux on Wayland:** if the AppImage crashes on start, use the `PKGBUILD`. It uses your system's WebKit instead of the bundled one.
 
-2. **Install dependencies**
-   ```bash
-   bun install
-   ```
+### Quakboard on iPhone and iPad (in development)
 
-3. **Run in development mode**
-   ```bash
-   bun run tauri dev
-   ```
-
-4. **Build for production**
-   ```bash
-   bun run tauri build
-   ```
-
-   The app bundle will be created in `src-tauri/target/release/bundle/`
+A native iOS app is being built with the same sync core: history, pairing, Paste & Send, and a Share extension. Progress is tracked in [docs/MOBILE_PLAN.md](docs/MOBILE_PLAN.md). Android comes after iOS.
 
 ---
 
-## ⌨️ Keyboard Shortcuts
+## Keyboard shortcuts
 
 | Shortcut | Action |
-|----------|--------|
-| `⌘⇧V` | Toggle clipboard window (customizable in Settings) |
-| `⌘K` | Focus search bar |
-| `⌘W` | Close window |
-| `⌘Q` | Quit application |
-| `↑/↓` | Navigate clipboard items |
-| `Enter` | Copy selected item to clipboard |
-| `⌘⭐` | Toggle favorite |
+|---|---|
+| `Ctrl/Cmd + Shift + V` | Show or hide Quakboard (changeable in Settings) |
+| `↑` / `↓` | Move through your history |
+| `Enter` | Paste the selected item into the previous app |
+| `Esc` | Clear the search or filter; press again to hide the window |
 
 ---
 
-## 🏗️ Architecture
+## Privacy
 
-### Technology Stack
+- **Local first:** your history stays in a SQLite database on your device.
+- **No account, no telemetry, no cloud.**
+- **Sync is device to device** on your local network. Pairing uses SPAKE2, so the code is never sent over the network, and everything after that is encrypted with ChaCha20-Poly1305.
+- **Internet is only used** for link previews and update checks.
 
-**Frontend:**
-- [Svelte 5](https://svelte.dev) - Reactive UI framework with Runes
-- [SvelteKit](https://kit.svelte.dev) - Application framework (SPA mode)
-- [TailwindCSS v4](https://tailwindcss.com) - Utility-first CSS with `@theme`
-- [TypeScript](https://www.typescriptlang.org) - Type-safe JavaScript
-- [Vite](https://vitejs.dev) - Fast build tool and dev server
+**Where your data lives:**
 
-**Backend:**
-- [Tauri v2](https://tauri.app) - Lightweight desktop application framework
-- [Rust](https://www.rust-lang.org) - Systems programming language
-- [SQLite](https://www.sqlite.org) - Local database via `rusqlite`
-- [Tauri Plugins](https://tauri.app/plugin/):
-  - `tauri-plugin-global-shortcut` - System-wide keyboard shortcuts
-  - `tauri-plugin-notification` - Native notifications
-  - `tauri-plugin-opener` - Open files and URLs
-
-### Project Structure
-
-```
-global_clipboard/
-├── src/                          # Frontend (SvelteKit + Svelte 5)
-│   ├── lib/
-│   │   ├── components/          # Reusable UI components
-│   │   │   ├── sidebar/         # Sidebar with items list
-│   │   │   ├── content/         # Content viewer panel
-│   │   │   ├── header/          # Search and filters
-│   │   │   ├── settings/        # Settings components
-│   │   │   └── ui/              # Base UI components
-│   │   ├── stores/              # Svelte 5 runes-based stores
-│   │   ├── tauri/               # Tauri command wrappers
-│   │   ├── types/               # TypeScript type definitions
-│   │   └── utils/               # Utility functions
-│   ├── routes/                  # SvelteKit routes
-│   └── app.css                  # TailwindCSS v4 with @theme
-│
-├── src-tauri/                   # Backend (Rust + Tauri)
-│   ├── src/
-│   │   ├── clipboard/           # Clipboard monitoring
-│   │   │   ├── monitor.rs       # Background clipboard watcher
-│   │   │   ├── operations.rs   # Read/write operations
-│   │   │   └── types.rs         # Content type detection
-│   │   ├── commands/            # Tauri commands (API)
-│   │   │   ├── clipboard.rs    # CRUD operations
-│   │   │   ├── settings.rs     # Settings & hotkeys
-│   │   │   ├── colors.rs       # Color conversion
-│   │   │   └── links.rs         # URL metadata
-│   │   ├── db/                  # Database layer
-│   │   │   ├── repository.rs   # Data access with pagination
-│   │   │   ├── models.rs       # Data models
-│   │   │   └── schema.rs       # SQLite schema
-│   │   ├── shortcuts.rs         # Global hotkey management
-│   │   └── lib.rs               # App initialization
-│   └── capabilities/            # Tauri permissions
-│
-└── README.md                    # This file
-```
-
-### Clean Architecture Layers
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    PRESENTATION                          │
-│        (routes/ + lib/components/)                       │
-│  • Svelte 5 components with Runes                       │
-│  • No business logic                                    │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────┐
-│                  APPLICATION                             │
-│              (lib/stores/)                               │
-│  • State management with $state, $derived               │
-│  • Business logic orchestration                         │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────┐
-│                 INFRASTRUCTURE                           │
-│           (lib/tauri/ + Rust backend)                    │
-│  • Tauri command wrappers (TypeScript)                  │
-│  • Repository implementations (Rust)                     │
-│  • Database access (SQLite)                             │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────┐
-│                    DOMAIN                                │
-│        (lib/types/ + Rust models)                        │
-│  • Type definitions & interfaces                        │
-│  • Business rules & validation                          │
-└─────────────────────────────────────────────────────────┘
-```
+| System | Folder |
+|---|---|
+| macOS | `~/Library/Application Support/com.dereckan.quakboard/` |
+| Linux | `~/.local/share/com.dereckan.quakboard/` |
+| Windows | `%APPDATA%\com.dereckan.quakboard\` |
 
 ---
 
-## 🗄️ Database Schema
+## Build from source
 
-```sql
-CREATE TABLE clipboard_items (
-    id TEXT PRIMARY KEY,
-    content_type TEXT NOT NULL,      -- 'text', 'code', 'color', 'link', 'file', 'image'
-    content_text TEXT,
-    content_metadata TEXT,            -- JSON: { language, domain, formats, etc. }
-    source_app TEXT,
-    code_language TEXT,
-    file_url TEXT,
-    file_name TEXT,
-    file_size_bytes INTEGER,
-    file_mime_type TEXT,
-    is_favorite INTEGER DEFAULT 0,
-    is_snippet INTEGER DEFAULT 0,
-    snippet_name TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    synced INTEGER DEFAULT 0,
-    server_id TEXT
-);
+### Prerequisites
+- [Rust](https://rustup.rs) (stable) and [Bun](https://bun.sh)
+- **macOS:** Xcode Command Line Tools (`xcode-select --install`)
+- **Windows:** the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) (Microsoft C++ Build Tools and WebView2)
+- **Linux (Debian/Ubuntu):**
+  ```bash
+  sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+    librsvg2-dev libssl-dev pkg-config build-essential libxdo-dev \
+    libxcb-shape0-dev libxcb-xfixes0-dev liblcms2-dev libjpeg-dev
+  ```
 
-CREATE TABLE user_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-```
-
----
-
-## 🎨 Key Design Decisions
-
-### Why Svelte 5?
-- **Runes system** provides clearer reactivity than stores
-- **Smaller bundle size** compared to React/Vue
-- **Better performance** with compile-time optimization
-- **Cleaner syntax** reduces boilerplate
-
-### Why Tauri?
-- **Lightweight** - 600KB bundle vs 100MB+ Electron
-- **Fast startup** - Native webview, no bundled Chromium
-- **Secure** - Rust backend with explicit permissions
-- **Cross-platform** - Single codebase for macOS, Windows, Linux
-
-### Why Rust?
-- **Memory safety** without garbage collection
-- **Performance** - Near C/C++ speed
-- **Reliability** - Prevents crashes and data races
-- **Modern tooling** - Cargo, clippy, rustfmt
-
-### Pagination Strategy
-- **Server-side pagination** (50-100 items per page)
-- **Infinite scroll** for smooth UX
-- **Optimized for mobile** and large datasets
-- **Memory efficient** - Only loads visible items
-
----
-
-## 🔧 Development
-
-### Run Tests
+### Run and build
 ```bash
-# Rust tests
-cargo test
+git clone https://github.com/DereckAn/Quakboard.git
+cd Quakboard
+bun install
 
-# TypeScript checks
-bun run check
-
-# Linting
-cargo clippy
+bun run tauri dev     # run with hot reload
+bun run tauri build   # installers in src-tauri/target/release/bundle/
 ```
 
-### Format Code
+### Tests and checks
+These are the same checks CI runs:
 ```bash
-# Rust
-cargo fmt
-
-# TypeScript/Svelte
-bunx prettier --write src
+bun run check                                   # Svelte and TypeScript
+bun run test:frontend                           # Vitest
+cargo test  --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test  --manifest-path crates/quakboard-sync/Cargo.toml
 ```
 
-### Build Commands
+### iOS (on a Mac with Xcode)
 ```bash
-# Development
-bun run dev              # Frontend only
-bun run tauri dev        # Full app with hot reload
+./scripts/build-ios.sh      # builds the sync core for iOS and its Swift package
+open ios/Quakboard/Quakboard.xcodeproj
+```
+Run the script again after changing Rust code. Xcode doesn't run it for you.
 
-# Production
-bun run build            # Build frontend
-bun run tauri build      # Build app bundle
+---
 
-# Type checking
-bun run check            # Check types
-bun run check:watch      # Watch mode
+## Project structure
+
+```
+src/                        Desktop UI (SvelteKit + Svelte 5, TailwindCSS v4)
+src-tauri/                  Desktop backend (Rust + Tauri v2): clipboard, database, hotkeys
+crates/
+  quakboard-sync/           Sync core shared by every app: pairing, encryption, transfers
+  quakboard-sync-ffi/       Swift and Kotlin bindings for the core (UniFFI)
+ios/
+  QuakboardSync/            Swift package wrapping the core (generated by scripts/build-ios.sh)
+  Quakboard/                iOS app (SwiftUI)
+packaging/arch/             Arch Linux PKGBUILD
+docs/                       Design plans: LAN sync, image sync, file sync, mobile
 ```
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
-### Port 1420 already in use
+**Devices don't find each other**
+- Both need sync turned on and must be on the same network.
+- Some networks (guest or office Wi-Fi) block discovery. Use **Connect by IP** instead.
+- Allow Quakboard through your firewall. Sync uses TCP port **47823**.
+- On iPhone, allow **Local Network** for Quakboard in Settings > Privacy & Security.
+
+**The hotkey doesn't work:** another app may be using it. Pick a different one in Settings.
+
+**Port 1420 already in use** (development):
 ```bash
 lsof -ti:1420 | xargs kill -9
 ```
 
-### Hotkey conflicts
-Go to Settings and change the global hotkey to avoid conflicts with other apps.
-
-### App won't start
-```bash
-# Kill existing processes
-pkill -9 global_clipboard
-
-# Clear app data (WARNING: deletes all clipboard history)
-rm -rf ~/Library/Application\ Support/clip/
-```
-
-### Build fails on macOS
-Ensure Xcode Command Line Tools are installed:
-```bash
-xcode-select --install
-```
+**Start over** (deletes your history and pairings):
+quit Quakboard, then delete the data folder for your system listed under [Privacy](#privacy).
 
 ---
 
-## 🔒 Privacy & Security
+## Roadmap
 
-- **100% Local** - All data stored on your device
-- **No telemetry** - We don't track or collect any data
-- **No internet required** - Works completely offline (except URL metadata fetching)
-- **Sandboxed** - Tauri security model with explicit permissions
-- **Open source** - Audit the code yourself
-
-**Database location:** `~/Library/Application Support/clip/clipboard.db`
+- [docs/MOBILE_PLAN.md](docs/MOBILE_PLAN.md): iPhone, iPad and Android apps
+- [documentation/ROADMAP.md](documentation/ROADMAP.md): the longer-term plan
 
 ---
 
-## 🚧 Roadmap
+## Contributing
 
-**📋 Ver [ROADMAP.md](./ROADMAP.md) para el plan completo de desarrollo.**
-
-### 🐛 Bugs Conocidos
-- Search bar no muestra resultados - **Próximo a arreglar**
-
-### v1.1 (Próxima versión - 1-2 meses)
-- [ ] 🐛 Arreglar search bar
-- [ ] 🎨 Mejorar diseño visual
-- [ ] 📸 Soporte para imágenes copiadas
-- [ ] 🖼️ Interpretar y mostrar SVG
-- [ ] ⚙️ Settings avanzados (límites, retención, uso de memoria)
-- [ ] 📱 UI responsive para móviles y tablets
-- [ ] ✅ Testing básico
-
-### v1.2 (2-3 meses)
-- [ ] 🔐 Sistema de cuentas y autenticación (Supabase OAuth)
-- [ ] ☁️ Sincronización con la nube
-- [ ] 💾 Storage en Supabase
-- [ ] 🔄 Sync offline-first
-
-### v2.0 (4-6 meses)
-- [ ] 💰 Sistema de planes (Free y Pro)
-- [ ] 💳 Integración de pagos con Stripe
-- [ ] 🔍 Búsqueda avanzada (Plan Pro)
-- [ ] 📁 Carpetas y tags (Plan Pro)
-
-### v3.0+ (6-12 meses)
-- [ ] 👥 Colaboración en equipo
-- [ ] 🔌 API pública
-- [ ] 🌐 Extensiones del navegador
-- [ ] 📱 Apps móviles (iOS/Android)
-- [ ] 🤖 Features con IA
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow. In short:
+1. Fork the repository and create a branch (`git checkout -b feat/my-change`).
+2. Run the [tests and checks](#tests-and-checks) before opening a pull request.
+3. Use [conventional commits](https://www.conventionalcommits.org).
 
 ---
 
-## 🤝 Contributing
+## License
 
-Contributions are welcome! Please follow these steps:
+MIT. See [LICENSE](LICENSE).
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## Contact
 
-### Development Guidelines
-- Follow the existing code style
-- Run tests before submitting PR
-- Update documentation as needed
-- Use conventional commits
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- [Tauri Team](https://tauri.app) - For the amazing framework
-- [Svelte Team](https://svelte.dev) - For Svelte 5 and the new Runes system
-- [Rust Community](https://www.rust-lang.org) - For the incredible language and ecosystem
-- [TailwindCSS](https://tailwindcss.com) - For the utility-first CSS framework
-
----
-
-## 📬 Contact
-
-**Created by:** [@laruina](https://github.com/laruina)
-
-**Issues:** [GitHub Issues](https://github.com/yourusername/global_clipboard/issues)
-
----
+Created by [@DereckAn](https://github.com/DereckAn). Report bugs and ideas in [GitHub Issues](https://github.com/DereckAn/Quakboard/issues).
 
 <div align="center">
-  <strong>⭐ Star this repo if you find it useful! ⭐</strong>
-
-  <br/>
-
-  Made with ❤️ using Tauri, Svelte 5, and Rust
+  <br>
+  Made with Tauri, Svelte 5 and Rust
 </div>
