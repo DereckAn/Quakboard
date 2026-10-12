@@ -96,15 +96,7 @@ final class SyncModel: ObservableObject {
             let store = try History(dir: dir)
             self.store = store
             reloadHistory()
-            // Pairing keys: Rust saves through a temporary file and a rename,
-            // and new files take their folder's protection class.
-            // TODO(dereck): move to the App Group container with the Share Extension (Phase 4, step 5)
-            let syncDir = dir.appending(path: "sync", directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(at: syncDir, withIntermediateDirectories: true)
-            try FileManager.default.setAttributes(
-                [.protectionKey: FileProtectionType.complete],
-                ofItemAtPath: syncDir.path(percentEncoded: false)
-            )
+            let syncDir = try Self.syncDirectory(movingFrom: dir)
             let node = try SyncNode(
                 dataDir: syncDir.path(percentEncoded: false),
                 deviceName: UIDevice.current.name,
@@ -178,6 +170,28 @@ final class SyncModel: ObservableObject {
             pairing = nil
             showToast(Self.message(error), isError: true)
         }
+    }
+
+    /// The pairing keys' folder, in the App Group so the Share Extension sends
+    /// as this device. Pairings made before it existed move there once.
+    /// History stays in the app: SQLite in a shared folder can get a suspended
+    /// app killed for holding a lock.
+    private static func syncDirectory(movingFrom appDir: URL) throws -> URL {
+        let files = FileManager.default
+        guard let group = files.containerURL(forSecurityApplicationGroupIdentifier: "group.com.dereckan.quakboard") else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let dir = group.appending(path: "sync", directoryHint: .isDirectory)
+        let old = appDir.appending(path: "sync", directoryHint: .isDirectory)
+        if !files.fileExists(atPath: dir.path(percentEncoded: false)),
+           files.fileExists(atPath: old.path(percentEncoded: false)) {
+            try files.moveItem(at: old, to: dir)
+        }
+        try files.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Rust saves through a temporary file and a rename, and new files take
+        // their folder's protection class.
+        try files.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: dir.path(percentEncoded: false))
+        return dir
     }
 
     /// After a short grace period in the background, sync stops and desktops
