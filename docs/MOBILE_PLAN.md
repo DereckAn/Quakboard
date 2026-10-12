@@ -1,6 +1,6 @@
 # Plan: iPhone/iPad and Android apps
 
-**Status:** Phases 1–3 done (see [Phase 1](#what-was-built-in-phase-1), [Phase 2](#what-was-built-in-phase-2) and [Phase 3](#what-was-built-in-phase-3)). Phase 4, the iOS app MVP, is next.
+**Status:** Phases 1–4 done (see [Phase 1](#what-was-built-in-phase-1), [Phase 2](#what-was-built-in-phase-2), [Phase 3](#what-was-built-in-phase-3) and [Phase 4](#what-was-built-in-phase-4)). Phase 5, iOS files, is next.
 
 ## Goal
 Quakboard on iPhone, iPad and later Android, syncing with the desktop app: text, images and files, using the same pairing and encryption.
@@ -235,17 +235,79 @@ Built on `feat/build-ios`. Where it differs from the steps above, this section i
 - **Devices:** the same flows as desktop. A sync toggle, this device's name and IP, paired devices with Unpair, nearby devices with Pair, Connect by IP, and the code-entry and code-display sheets.
 - **Paste & Send:** a `UIPasteControl` button that sends the clipboard to paired devices. No prompt, since the user tapped a system paste button.
 
+**Sending what was copied in another app:** iOS never lets an app read the clipboard in the background, or even learn that it changed, so copying in WhatsApp can't be caught on its own. These cover it, from least to most effort for the user:
+- **The Share Extension** (below): WhatsApp → Share → Quakboard, without opening the app.
+- **"You copied something" banner (built):** when the app comes to the front, it checks the clipboard's `changeCount` and `hasStrings`/`hasImages`. Those don't read the content, so iOS shows no prompt. If something new is there, a banner offers the Paste button. The app's own writes (received text, Copy) are marked as seen, so they're never offered back.
+- **Automatic send on open (built, opt-in):** a Settings switch, "Send new copies when Quakboard opens". It reads the clipboard in code, which shows "Allow Paste?" each time unless the user sets **Settings → Quakboard → Paste from Other Apps → Allow**. The switch explains that, links to the app's iOS settings, and stays off by default, since it sends without a tap. While it's on, the banner isn't shown. On "Don't Allow" nothing is sent, and that copy isn't asked about again; the Paste button still sends it.
+
 **The Share Extension ("Share to Quakboard"):**
-- A separate target that accepts text, URLs and images from any app's share sheet.
+- A separate target that accepts text, URLs and images from any app's share sheet, such as a WhatsApp message (long-press → Share → Quakboard) or a Safari page.
 - It sends them through `SyncNode` and closes. iOS gives extensions limited memory and time, so it sends and exits rather than listening.
 
 **Receiving:**
 - While the app is open, received text and images go into history. Text is copied to `UIPasteboard`, the same as the desktop. Images go to history, with a "Copy" button.
-- When the app is backgrounded, it stops listening cleanly. Desktops see it as offline, the same as a closed laptop today.
+- When the app is backgrounded, it keeps receiving for a **25-second grace period** (`beginBackgroundTask`; iOS allows about 30), so a transfer finishes and something copied on the desktop right after switching apps still arrives. Then it stops listening and advertising cleanly. Desktops see it as offline, the same as a closed laptop today.
+- Coming back to the front restarts sync and discovery at once.
+- **Built:** both of the above, on `feat/listener`. All iPad windows share one sync node; the app counts as backgrounded only when every window is.
+- Receiving while the app is closed for longer needs push notifications and a server (see "Later"). No background mode fits a clipboard listener, and App Review rejects using location or audio only to stay awake.
 
 **App Store notes:** explain the local-network permission and the clipboard use in the review notes.
 
 **Check:** the manual tests from IMAGE_SYNC_PLAN, run Mac/Linux ↔ iPhone in both directions, plus the Share Extension from Safari and Photos.
+
+### What was built in Phase 4
+Built on `feat/build-ios` and `feat/listener`. Where it differs from the plan above, this section is what's true.
+
+1. **One universal app for iPhone and iPad** (`ios/Quakboard`), not a separate tablet app.
+   - **iPhone:** tabs for All Clips, Pinned and Settings.
+   - **iPad at full width:** a sidebar (library, the clip types with counts, Devices & Sync), the list, and the open clip beside it. Below 720 points next to the sidebar, the list fills the width and clips open on top.
+   - **Slide Over, a narrow Split View and big iPhones in landscape** keep the iPhone layout.
+   - **One `SyncModel` for the whole app,** so every iPad window shares one sync node instead of each trying to listen on the port.
+2. **Design** from the owner's drafts, with system fonts. Dark is slate with a sand accent; light is cream with a navy accent, plus a System / Light / Dark switch.
+   - **Skipped from the drafts,** because they don't exist or contradict local sync: iCloud, origin app, copy counts, tags, snippets, and the code tools.
+   - **The Paste button keeps the system's "Paste" label.** It's `UIPasteControl`, which is what avoids the "Allow Paste?" prompt, and its label can't be changed.
+3. **Discovery uses `NetService`, not `NWListener`/`NWBrowser`.** `NWListener` can only advertise a port it opens itself, and the Rust listener owns it. `NetService` is "to be deprecated" with no date; the code notes moving to `dns_sd` if it is.
+   - **Addresses:** each known device's address is looked up again every 30 seconds, and a failed advertise or browse is retried on the same timer. Problems such as a denied Local Network permission show under Nearby.
+   - **Devices are keyed by the `id` in their TXT record,** because Bonjour can rename a re-announced service (`id (2)`) and list one device many times.
+   - **LAN addresses win over link-local (169.254.x) and loopback,** on the phone and in the core's `pick_address`, which the desktop uses.
+4. **History uses GRDB, not SwiftData,** to keep iOS 16.
+   - **What's stored:** text with the desktop's type (`on_text` gained `content_type` in the FFI), images as PNG files, and pins.
+   - **Duplicates:** a repeated text moves to the top and keeps its pin.
+   - **Limits:** the newest 500 unpinned items, with no paging (marked `ponytail:`); search with `LIKE`.
+   - **Delete** removes the clip and its image file.
+5. **Pairing keys live in the App Group** `group.com.dereckan.quakboard`, with `complete` data protection, so the Share Extension sends as the same device. Pairings made before it existed move there once.
+   - **History stays private to the app:** SQLite in a shared container can get the suspended app killed (`0xdead10cc`) for holding a lock.
+   - **Free signing (a Personal Team) supports the App Group.** The $99/year account is only needed to publish.
+6. **Settings:** the Sync and "Also sync images" switches; this device's name, IP and short id; paired devices with online status, update badges and Unpair; nearby devices with Pair; Connect by IP.
+   - **Pairing works in both directions,** in one sheet. The phone accepts requests only while Settings is on screen.
+   - **Cancel works for a code the phone is showing.** The core gained `SyncService::cancel_responding`, used by the desktop too, whose dialog had the same gap.
+7. **Background:** sync keeps running for a **25-second grace period** (`beginBackgroundTask`), then stops listening and advertising, so desktops see the phone as offline. Coming back restarts sync and discovery at once.
+   - **Starts and stops are queued,** so quick toggles of the switch and quick app switches end in the latest state.
+8. **Sending what was copied elsewhere** (iOS never lets a background app read or watch the clipboard):
+   - **Paste & Send:** the Paste button.
+   - **The "You copied something" banner,** which checks `changeCount` and `hasStrings`/`hasImages` without a prompt.
+   - **The opt-in "Send new copies when Quakboard opens".**
+   - **The Share Extension.**
+9. **The Share Extension** (`ios/Quakboard/QuakboardShare`, bundle id `com.dereckan.quakboard.ios.share`): an image, a web link or text. It sends with the app's identity from the App Group, shows the result, and closes.
+   - **Photos are scaled to 3072 px** to stay within the extension's memory.
+   - **It ignores the app's Sync and image switches,** since sharing is deliberate.
+   - **What it sends isn't added to the phone's history.**
+10. **The app icon** is the desktop's duck, made opaque, plus a dark variant on slate.
+11. **Simulators** listen on 47824 (iPhone) and 47825 (iPad), so one of each can run next to the desktop on the same Mac. Real devices use 47823.
+
+**Check:** passed on a real iPhone and iPad with a Mac:
+- pairing both ways, including Cancel
+- text and images both ways
+- the grace period and going offline
+- the banner and automatic send
+- the Share Extension from WhatsApp, Safari and Photos
+- the iPad's two panes in landscape
+
+**Left for later:**
+- **Clips shared through the extension** don't show up in the phone's history. That needs a safe hand-off from the extension to the app.
+- **The desktop is announced twice** after a restart while its old announcement is still cached. Phones hide it, but the desktop could announce more cleanly.
+- **Text from other devices doesn't say who sent it.** The core's text hook still doesn't carry the sender; images do.
+- **History has no paging** past 500 items.
 
 ## Phase 5: iOS files
 - **Receiving:** file offers become items "on Laptop". **Fetch** saves into the app's Documents folder (visible in the Files app, via `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`), with a progress bar and Cancel.

@@ -23,6 +23,9 @@ struct ClipsWorkspace: View {
                     HStack(alignment: .top, spacing: 0) {
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: 12) {
+                                if model.hasNewClipboard && !isPinnedOnly {
+                                    ClipboardOfferBanner(model: model)
+                                }
                                 ClipList(
                                     model: model,
                                     isPinnedOnly: isPinnedOnly,

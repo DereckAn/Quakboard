@@ -101,7 +101,15 @@ final class Discovery: NSObject {
         let device = NearbyDevice(id: id, address: "\(ip):\(service.port)")
         guard found[service.name] != device else { return }
         found[service.name] = device
-        onChange(Array(found.values))
+        reportFound()
+    }
+
+    /// One entry per device. Bonjour can show a device under several names
+    /// (it renames an announcement that collides with an older one, like
+    /// "id (2)"); the id in its TXT record is what identifies it.
+    private func reportFound() {
+        let byID = Dictionary(found.values.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        onChange(Array(byID.values))
     }
 
     private static func problem(_ action: String, _ errorDict: [String: NSNumber]) -> String {
@@ -115,7 +123,7 @@ final class Discovery: NSObject {
         onProblem(browseProblem ?? publishProblem)
     }
 
-    /// A LAN address over loopback, like the desktop.
+    /// A LAN address first, like the desktop.
     private static func pickIPv4(_ addresses: [Data]) -> String? {
         let ips = addresses.compactMap { data -> String? in
             data.withUnsafeBytes { raw in
@@ -124,7 +132,10 @@ final class Discovery: NSObject {
                 return numericHost(address, length: socklen_t(data.count))
             }
         }
-        return ips.first { !$0.hasPrefix("127.") } ?? ips.first
+        // 169.254.x.x only works over a direct link between two devices, and
+        // 127.x only from the same machine.
+        let rank = { (ip: String) in ip.hasPrefix("127.") ? 2 : ip.hasPrefix("169.254.") ? 1 : 0 }
+        return ips.min { rank($0) < rank($1) }
     }
 
     private static func numericHost(_ address: UnsafePointer<sockaddr>, length: socklen_t) -> String? {
@@ -159,7 +170,7 @@ extension Discovery: @preconcurrency NetServiceBrowserDelegate {
     func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
         services.removeValue(forKey: service.name)?.stop()
         if found.removeValue(forKey: service.name) != nil {
-            onChange(Array(found.values))
+            reportFound()
         }
     }
 }

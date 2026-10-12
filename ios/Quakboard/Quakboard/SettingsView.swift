@@ -108,6 +108,17 @@ struct SettingsView: View {
                 detail: "Send and receive copied images, up to 20 MB.",
                 isOn: Binding(get: { model.isSyncingImages }, set: { model.setSyncingImages($0) })
             )
+            toggle(
+                "Send new copies when Quakboard opens",
+                detail: "Sends what you copied in other apps, without a tap. iOS asks “Allow Paste?” each time unless you set Paste from Other Apps to Allow in Quakboard's iOS settings.",
+                isOn: Binding(get: { model.isSendingOnOpen }, set: { model.setSendingOnOpen($0) })
+            )
+            if model.isSendingOnOpen, let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                Link(destination: settingsURL) {
+                    Label("Open Quakboard in iOS Settings", systemImage: "gear")
+                }
+                .buttonStyle(ThemeButtonStyle())
+            }
             if let problem = model.syncProblem {
                 Label(problem, systemImage: "exclamationmark.triangle")
                     .font(.caption)

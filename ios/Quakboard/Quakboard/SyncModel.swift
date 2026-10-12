@@ -27,7 +27,14 @@ final class SyncModel: ObservableObject {
     private enum Keys {
         static let isSyncEnabled = "isSyncEnabled"
         static let isSyncingImages = "isSyncingImages"
+        static let seenPasteboardChange = "seenPasteboardChange"
+        static let isSendingOnOpen = "isSendingOnOpen"
     }
+
+    /// How long sync keeps running after the app leaves the screen, so a
+    /// transfer can finish and a quick copy elsewhere still arrives. iOS
+    /// grants roughly 30 seconds of background time; this stays under it.
+    private static let backgroundGrace = Duration.seconds(25)
 
     @Published private(set) var identity: DeviceIdentity?
     @Published private(set) var peers: [PeerInfo] = []
@@ -36,6 +43,10 @@ final class SyncModel: ObservableObject {
     @Published private(set) var syncProblem: String?
     @Published private(set) var isSyncEnabled = UserDefaults.standard.object(forKey: Keys.isSyncEnabled) as? Bool ?? true
     @Published private(set) var isSyncingImages = UserDefaults.standard.object(forKey: Keys.isSyncingImages) as? Bool ?? true
+    /// Send what was copied elsewhere as soon as the app opens. Off by
+    /// default: it sends without a tap, and iOS asks "Allow Paste?" each time
+    /// unless the user allows pasting for the app in iOS Settings.
+    @Published private(set) var isSendingOnOpen = UserDefaults.standard.bool(forKey: Keys.isSendingOnOpen)
     @Published var pairing: Pairing?
     @Published private(set) var page = HistoryPage()
     @Published var search = "" {
@@ -46,6 +57,8 @@ final class SyncModel: ObservableObject {
         didSet { reloadHistory() }
     }
     @Published private(set) var toast: Toast?
+    /// Something new is on the clipboard that the user might want to send.
+    @Published private(set) var hasNewClipboard = false
 
     // Simulators share the Mac's network, where the desktop app already
     // listens on the default port; iPhone and iPad simulators get their own,
@@ -64,6 +77,16 @@ final class SyncModel: ObservableObject {
     private var toastTask: Task<Void, Never>?
     /// The latest start or stop; each waits for the one before.
     private var syncTask: Task<Void, Never>?
+    /// False while every window is in the background. iOS suspends the app
+    /// there, so sync stops instead of leaving a listener nobody answers.
+    private var isAppActive = true
+    private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+    private var graceTask: Task<Void, Never>?
+    /// The clipboard's change count last offered, sent or written by us.
+    private var seenPasteboardChange = UserDefaults.standard.integer(forKey: Keys.seenPasteboardChange)
+    /// The copy last tried automatically, so a "Don't Allow" isn't asked again
+    /// every time the app comes back.
+    private var autoSendAttempt: Int?
 
     func start() async {
         guard node == nil else { return }
@@ -73,15 +96,7 @@ final class SyncModel: ObservableObject {
             let store = try History(dir: dir)
             self.store = store
             reloadHistory()
-            // Pairing keys: Rust saves through a temporary file and a rename,
-            // and new files take their folder's protection class.
-            // TODO(dereck): move to the App Group container with the Share Extension (Phase 4, step 5)
-            let syncDir = dir.appending(path: "sync", directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(at: syncDir, withIntermediateDirectories: true)
-            try FileManager.default.setAttributes(
-                [.protectionKey: FileProtectionType.complete],
-                ofItemAtPath: syncDir.path(percentEncoded: false)
-            )
+            let syncDir = try Self.syncDirectory(movingFrom: dir)
             let node = try SyncNode(
                 dataDir: syncDir.path(percentEncoded: false),
                 deviceName: UIDevice.current.name,
@@ -99,12 +114,22 @@ final class SyncModel: ObservableObject {
         if isSyncEnabled {
             applySyncSetting()
         }
+        checkClipboard()
     }
 
     func setSyncEnabled(_ isEnabled: Bool) {
         isSyncEnabled = isEnabled
         UserDefaults.standard.set(isEnabled, forKey: Keys.isSyncEnabled)
         applySyncSetting()
+    }
+
+    /// Takes effect the next time the app opens, not right away.
+    func setSendingOnOpen(_ isEnabled: Bool) {
+        isSendingOnOpen = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: Keys.isSendingOnOpen)
+        if isEnabled {
+            hasNewClipboard = false
+        }
     }
 
     func setSyncingImages(_ isEnabled: Bool) {
@@ -147,6 +172,83 @@ final class SyncModel: ObservableObject {
         }
     }
 
+    /// The pairing keys' folder, in the App Group so the Share Extension sends
+    /// as this device. Pairings made before it existed move there once.
+    /// History stays in the app: SQLite in a shared folder can get a suspended
+    /// app killed for holding a lock.
+    private static func syncDirectory(movingFrom appDir: URL) throws -> URL {
+        let files = FileManager.default
+        guard let group = files.containerURL(forSecurityApplicationGroupIdentifier: "group.com.dereckan.quakboard") else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let dir = group.appending(path: "sync", directoryHint: .isDirectory)
+        let old = appDir.appending(path: "sync", directoryHint: .isDirectory)
+        if !files.fileExists(atPath: dir.path(percentEncoded: false)),
+           files.fileExists(atPath: old.path(percentEncoded: false)) {
+            try files.moveItem(at: old, to: dir)
+        }
+        try files.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Rust saves through a temporary file and a rename, and new files take
+        // their folder's protection class.
+        try files.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: dir.path(percentEncoded: false))
+        return dir
+    }
+
+    /// After a short grace period in the background, sync stops and desktops
+    /// see this device as offline, like a closed laptop. Coming back starts
+    /// sync and discovery again right away.
+    func setAppActive(_ isActive: Bool) {
+        guard isActive != isAppActive else { return }
+        isAppActive = isActive
+        if isActive {
+            endGracePeriod()
+            applySyncSetting()
+            checkClipboard()
+        } else {
+            if pairing != nil {
+                cancelPairing()
+            }
+            beginGracePeriod()
+        }
+    }
+
+    /// Without reading it: iOS only says whether the clipboard changed and
+    /// holds text or an image, which needs no "Allow Paste?" prompt.
+    func checkClipboard() {
+        let pasteboard = UIPasteboard.general
+        let isNew = pasteboard.changeCount != seenPasteboardChange
+            && (pasteboard.hasStrings || pasteboard.hasImages)
+            && isSyncEnabled
+            && !peers.isEmpty
+        // With sending on open, the banner would only repeat what just happened.
+        hasNewClipboard = isNew && !isSendingOnOpen
+        if isNew && isSendingOnOpen && autoSendAttempt != pasteboard.changeCount {
+            autoSendAttempt = pasteboard.changeCount
+            sendClipboard()
+        }
+    }
+
+    /// Reads the clipboard in code, which is what makes iOS ask "Allow
+    /// Paste?". On "Don't Allow" nothing is read or sent.
+    private func sendClipboard() {
+        let pasteboard = UIPasteboard.general
+        if pasteboard.hasImages, let image = pasteboard.image {
+            markClipboardSeen()
+            Task {
+                // Encoded off the main thread.
+                guard let png = await Task.detached(operation: { image.pngData() }).value else { return }
+                await send(png: png)
+            }
+        } else if pasteboard.hasStrings, let text = pasteboard.string {
+            markClipboardSeen()
+            Task { await send(text: text) }
+        }
+    }
+
+    func dismissClipboardOffer() {
+        markClipboardSeen()
+    }
+
     func cancelPairing() {
         node?.cancelPairing()
         pairing = nil
@@ -169,6 +271,7 @@ final class SyncModel: ObservableObject {
             return
         }
         guard let provider = providers.first else { return }
+        markClipboardSeen()
         if provider.canLoadObject(ofClass: UIImage.self) {
             _ = provider.loadObject(ofClass: UIImage.self) { [weak self] image, _ in
                 // Encoded here, off the main thread.
@@ -189,6 +292,7 @@ final class SyncModel: ObservableObject {
         } else if let text = item.text {
             UIPasteboard.general.string = text
         }
+        markClipboardSeen()
         showToast("Copied to clipboard")
     }
 
@@ -236,7 +340,7 @@ final class SyncModel: ObservableObject {
     private func send(text: String) async {
         guard let node, let store else { return }
         do {
-            try store.saveText(text, kind: .text)
+            try store.saveText(text, kind: HistoryItem.Kind(contentType: detectContentType(text: text)))
             reloadHistory()
             showToast(Self.sent(to: await node.sendText(text: text)))
         } catch {
@@ -285,13 +389,48 @@ final class SyncModel: ObservableObject {
         }
     }
 
-    /// Starts and stops run one at a time, each applying the switch as it is
-    /// when its turn comes, so quick toggles end in the last state chosen.
+    private func markClipboardSeen() {
+        seenPasteboardChange = UIPasteboard.general.changeCount
+        UserDefaults.standard.set(seenPasteboardChange, forKey: Keys.seenPasteboardChange)
+        hasNewClipboard = false
+    }
+
+    /// Keeps sync running for `backgroundGrace`, with iOS's permission, then
+    /// stops it.
+    private func beginGracePeriod() {
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Keep receiving") { [weak self] in
+            // iOS is ending the background time early: stop right now.
+            MainActor.assumeIsolated {
+                self?.stopSync()
+                self?.endGracePeriod()
+            }
+        }
+        graceTask = Task {
+            try? await Task.sleep(for: Self.backgroundGrace)
+            guard !Task.isCancelled else { return }
+            applySyncSetting()
+            await syncTask?.value
+            endGracePeriod()
+        }
+    }
+
+    private func endGracePeriod() {
+        graceTask?.cancel()
+        graceTask = nil
+        if backgroundTask != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
+        }
+    }
+
+    /// Starts and stops run one at a time, each applying the Sync switch and
+    /// whether the app is in front as they are when its turn comes, so quick
+    /// toggles and app switches end in the latest state.
     private func applySyncSetting() {
         let previous = syncTask
         syncTask = Task {
             await previous?.value
-            if isSyncEnabled {
+            if isSyncEnabled && isAppActive {
                 await startSync()
             } else {
                 stopSync()
@@ -357,6 +496,8 @@ final class SyncModel: ObservableObject {
 
     fileprivate func received(text: String) {
         UIPasteboard.general.string = text
+        // Our own write: not something to offer to send back.
+        markClipboardSeen()
         reloadHistory()
     }
 
