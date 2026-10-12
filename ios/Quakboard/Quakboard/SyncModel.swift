@@ -28,6 +28,7 @@ final class SyncModel: ObservableObject {
         static let isSyncEnabled = "isSyncEnabled"
         static let isSyncingImages = "isSyncingImages"
         static let seenPasteboardChange = "seenPasteboardChange"
+        static let isSendingOnOpen = "isSendingOnOpen"
     }
 
     /// How long sync keeps running after the app leaves the screen, so a
@@ -42,6 +43,10 @@ final class SyncModel: ObservableObject {
     @Published private(set) var syncProblem: String?
     @Published private(set) var isSyncEnabled = UserDefaults.standard.object(forKey: Keys.isSyncEnabled) as? Bool ?? true
     @Published private(set) var isSyncingImages = UserDefaults.standard.object(forKey: Keys.isSyncingImages) as? Bool ?? true
+    /// Send what was copied elsewhere as soon as the app opens. Off by
+    /// default: it sends without a tap, and iOS asks "Allow Paste?" each time
+    /// unless the user allows pasting for the app in iOS Settings.
+    @Published private(set) var isSendingOnOpen = UserDefaults.standard.bool(forKey: Keys.isSendingOnOpen)
     @Published var pairing: Pairing?
     @Published private(set) var page = HistoryPage()
     @Published var search = "" {
@@ -79,6 +84,9 @@ final class SyncModel: ObservableObject {
     private var graceTask: Task<Void, Never>?
     /// The clipboard's change count last offered, sent or written by us.
     private var seenPasteboardChange = UserDefaults.standard.integer(forKey: Keys.seenPasteboardChange)
+    /// The copy last tried automatically, so a "Don't Allow" isn't asked again
+    /// every time the app comes back.
+    private var autoSendAttempt: Int?
 
     func start() async {
         guard node == nil else { return }
@@ -121,6 +129,15 @@ final class SyncModel: ObservableObject {
         isSyncEnabled = isEnabled
         UserDefaults.standard.set(isEnabled, forKey: Keys.isSyncEnabled)
         applySyncSetting()
+    }
+
+    /// Takes effect the next time the app opens, not right away.
+    func setSendingOnOpen(_ isEnabled: Bool) {
+        isSendingOnOpen = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: Keys.isSendingOnOpen)
+        if isEnabled {
+            hasNewClipboard = false
+        }
     }
 
     func setSyncingImages(_ isEnabled: Bool) {
@@ -185,10 +202,33 @@ final class SyncModel: ObservableObject {
     /// holds text or an image, which needs no "Allow Paste?" prompt.
     func checkClipboard() {
         let pasteboard = UIPasteboard.general
-        hasNewClipboard = pasteboard.changeCount != seenPasteboardChange
+        let isNew = pasteboard.changeCount != seenPasteboardChange
             && (pasteboard.hasStrings || pasteboard.hasImages)
             && isSyncEnabled
             && !peers.isEmpty
+        // With sending on open, the banner would only repeat what just happened.
+        hasNewClipboard = isNew && !isSendingOnOpen
+        if isNew && isSendingOnOpen && autoSendAttempt != pasteboard.changeCount {
+            autoSendAttempt = pasteboard.changeCount
+            sendClipboard()
+        }
+    }
+
+    /// Reads the clipboard in code, which is what makes iOS ask "Allow
+    /// Paste?". On "Don't Allow" nothing is read or sent.
+    private func sendClipboard() {
+        let pasteboard = UIPasteboard.general
+        if pasteboard.hasImages, let image = pasteboard.image {
+            markClipboardSeen()
+            Task {
+                // Encoded off the main thread.
+                guard let png = await Task.detached(operation: { image.pngData() }).value else { return }
+                await send(png: png)
+            }
+        } else if pasteboard.hasStrings, let text = pasteboard.string {
+            markClipboardSeen()
+            Task { await send(text: text) }
+        }
     }
 
     func dismissClipboardOffer() {
