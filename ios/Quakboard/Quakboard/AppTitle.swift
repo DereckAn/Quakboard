@@ -6,12 +6,12 @@ struct AppTitle: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "doc.on.clipboard")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.accentText)
+            // The app icon, with its dark variant in dark mode.
+            Image("AppLogo")
+                .resizable()
                 .frame(width: 32, height: 32)
-                .background(Theme.cardRaised, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.border))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Quakboard")

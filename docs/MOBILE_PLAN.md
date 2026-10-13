@@ -1,9 +1,9 @@
-# Plan: iPhone/iPad and Android apps
+# Plan: iPhone/iPad and Android apps, the website, and distribution
 
-**Status:** Phases 1–5 done (see [Phase 1](#what-was-built-in-phase-1), [Phase 2](#what-was-built-in-phase-2), [Phase 3](#what-was-built-in-phase-3), [Phase 4](#what-was-built-in-phase-4) and [Phase 5](#what-was-built-in-phase-5)). iOS v1 is complete. Next is Phase 6 (Android) or Phase 7 (release).
+**Status:** Phases 1–5 done (see [Phase 1](#what-was-built-in-phase-1), [Phase 2](#what-was-built-in-phase-2), [Phase 3](#what-was-built-in-phase-3), [Phase 4](#what-was-built-in-phase-4) and [Phase 5](#what-was-built-in-phase-5)). iOS v1 is complete. Next is Phase 6 (Android) or Phase 7 (release). Phases 8 (the website) and 9 (package managers) were added later.
 
 ## Goal
-Quakboard on iPhone, iPad and later Android, syncing with the desktop app: text, images and files, using the same pairing and encryption.
+Quakboard on iPhone, iPad and later Android, syncing with the desktop app: text, images and files, using the same pairing and encryption. Then a website that presents it, and installs through each system's usual package manager.
 
 ## The approach in one picture
 ```
@@ -360,6 +360,80 @@ Built on `feat/files-ios`. Where it differs from the plan above, this section is
 - **iOS:** TestFlight beta, then App Store review (privacy labels: no data collected, everything stays on the local network).
 - **Android:** Play Store internal testing, then production. Optionally F-Droid, since it fits the "100% local" story.
 - **Desktop:** release notes saying which desktop version pairs with the phones (the protocol version from Phase 1, step 4).
+- **Before App Store submission:** Apple requires a **privacy policy URL** and a **support URL**. They come from Phase 8, so its privacy and support pages ship first.
+
+## Phase 8: the website
+`quackpage/` is an **Astro 7 + Tailwind v4** project at the template stage; the owner didn't like the template. The site presents Quakboard and is where people download it.
+
+**Design:** from the owner's draft, like the apps. It reuses the apps' palette (slate and sand in dark, cream and navy in light), so the site, desktop and phones look like one product.
+
+**Pages:**
+- **Home:**
+  - what Quakboard is, in one line: a private clipboard that syncs between your own devices, with no cloud
+  - screenshots of the desktop, the iPhone and the iPad
+  - the main features
+  - a **Download** button that picks the visitor's system: macOS Apple Silicon or Intel, Windows x64 or ARM64, Linux (`.deb`, `.rpm`, AppImage), and later the App Store and Google Play
+- **Download:** every build and every install command (the package managers from Phase 9 as they land), with checksums.
+  - **Links follow the latest release:** GitHub's `releases/latest/download/<file>` links, so the site never needs a redeploy for a new version. That needs file names without the version number, which is a change to the release workflow.
+- **How sync works:** pairing with a code, what's encrypted, that nothing leaves the local network, and the firewall port (47823) and Connect by IP.
+- **Privacy policy:** no data collected, no account, local network only. **Required by the App Store** (Phase 7).
+- **Support:** a FAQ (devices don't find each other, the hotkey is taken, the iPhone receives only while open), plus links to GitHub Issues. **Also required by the App Store.**
+
+**Hosting:** a static build on GitHub Pages or Cloudflare Pages, deployed by a CI workflow when `quackpage/` changes. Optionally a custom domain.
+
+**Check:**
+- every Download link resolves to the current release
+- the pages work at phone width, in light and dark, with readable contrast
+- the privacy and support URLs are ready to paste into App Store Connect
+
+## Phase 9: install through package managers
+Today the desktop installs from GitHub release files, and Arch has `packaging/arch/PKGBUILD`. That package is `quakboard-bin`: it repackages the `.deb` instead of building from source, it's stuck at version 1.2.1, and its checksums are `SKIP`.
+
+The goal is installing with the system's usual command: `pacman`/`yay`, `apt`, `dnf`, `brew`, `winget`. Each also delivers updates.
+
+**First, in-app updates vs. package managers:** a copy installed by `pacman`, `apt` or `brew` must be updated by that package manager. The Tauri updater would fight it, or fail writing to a read-only `/usr`. So packaged builds turn the in-app updater off (a build flag), and say "Updates come from your package manager" instead.
+
+**Arch Linux, fully native:**
+- **`quakboard` (new):** builds from the release's source with `cargo` and `bun`, against the system's `webkit2gtk-4.1`, `gtk3` and `libayatana-appindicator`, with Arch's own build flags. Nothing comes from a `.deb`.
+- **`quakboard-bin`:** kept for people who don't want to compile. It's brought up to date, with the real checksums from the release's `SHA256SUMS`.
+- **Both published to the AUR,** and updated by CI on every tag (`pkgver`, checksums, `.SRCINFO`, pushed with an AUR SSH key).
+- **The official `[extra]` repository needs an Arch package maintainer to adopt it.** That isn't in our control; AUR popularity is what earns it.
+
+**Debian and Ubuntu (`apt install quakboard`):**
+- **Our own APT repository**, signed with a project GPG key and hosted on GitHub Pages (or Cloudsmith). CI publishes each release's `.deb` there.
+- **Users add it once** (one documented command), then `apt install quakboard`, and updates come with `apt upgrade`.
+- **Debian's and Ubuntu's own archives** need a Debian sponsor, and all Rust and JS dependencies packaged or vendored by their rules. That's long-term and not in our control. A Launchpad PPA is possible, but it builds offline from vendored source.
+
+**Fedora and openSUSE (`dnf`/`zypper`):** a **COPR** repository built from the release, or our own signed RPM repository next to the APT one.
+
+**Any Linux (Flatpak):** a **Flathub** listing, built from source with offline sources (`flatpak-cargo-generator` and `flatpak-node-generator`). Sandbox permissions are needed for the clipboard, the local network (sync) and global shortcuts. This needs checking per desktop environment, especially global hotkeys on Wayland.
+
+**macOS (Homebrew):**
+- **Now:** our own tap, `DereckAn/homebrew-quakboard`, with a Cask: `brew install --cask dereckan/quakboard/quakboard`.
+- **Then the official `homebrew/cask`,** which wants a **signed and notarized** app and some popularity.
+- **Notarization needs an Apple Developer ID,** the same $99/year account as Phase 7. It also removes Gatekeeper's "unidentified developer" warning for everyone, not just Homebrew users.
+
+**Windows (`winget install Quakboard`):**
+- **A manifest submitted to `microsoft/winget-pkgs`,** pointing at the release's installer and its SHA-256. CI opens the update PR on each tag (with `komac` or `wingetcreate`).
+- **Optionally** a Scoop bucket and a Chocolatey package.
+- **Code signing is strongly recommended:** unsigned installers get SmartScreen warnings. Azure Trusted Signing is the low-cost option.
+
+**Automation:** one release job, on a version tag, after the builds:
+- update the AUR packages
+- publish the APT and RPM repositories
+- update the Homebrew tap
+- open the winget PR
+- update the Flathub manifest
+
+The checksums all come from the same `SHA256SUMS`, so every channel ships identical files.
+
+**Check:** a clean machine or VM per channel installs, launches, syncs with another device, and updates to the next tag through its package manager:
+- Arch: `pacman`/`yay`
+- Ubuntu: `apt`
+- Fedora: `dnf`
+- Flatpak
+- macOS: `brew`
+- Windows: `winget`
 
 ## Later (needs a server)
 - **Receiving while the iPhone app is closed:** push notifications through APNs need a small relay server. That's where the earlier relay/cloud idea comes back. The same server would also cover syncing between different networks.
@@ -373,6 +447,9 @@ Built on `feat/files-ios`. Where it differs from the plan above, this section is
 | Old desktop vs new phone | The protocol version in Phase 1, step 4, ships before any mobile build |
 | UniFFI async or callback edge cases | Phase 3 proves the whole chain with a tiny app before any real UI work |
 | Memory and time limits in the Share Extension | It only sends small payloads (text, images ≤ 20 MB) and exits; files go through the main app |
+| In-app updater vs. package managers | Packaged builds turn the updater off; the package manager owns updates (Phase 9) |
+| Official repositories (Debian, Arch `[extra]`, `homebrew/cask`) are run by others | Start with repositories we control (AUR, our own APT/RPM repos, a Homebrew tap, winget); official ones come with adoption |
+| Unsigned apps scare users (Gatekeeper, SmartScreen) | Notarize on macOS (the Phase 7 developer account) and sign Windows installers before promoting package managers |
 | Two UIs to maintain | They're small (history, detail, devices); all the logic is in the shared core |
 
 ## Rough effort (one developer, part-time)
@@ -385,5 +462,7 @@ Built on `feat/files-ios`. Where it differs from the plan above, this section is
 | 5: iOS files | 1–2 weeks |
 | 6: Android | 4–6 weeks |
 | 7: Release | 1–2 weeks + review time |
+| 8: Website | 1–2 weeks |
+| 9: Package managers | 2–4 weeks, plus review time for winget, Flathub and any official repository |
 
 These are estimates for planning, not commitments. The first real signal comes at the end of Phase 3.
