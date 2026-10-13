@@ -77,11 +77,18 @@ struct ClipDetailView: View {
 
     private var actions: some View {
         HStack(spacing: 8) {
-            Button { model.copy(clip) } label: {
-                Label("Copy", systemImage: "doc.on.doc")
+            if let fileState = model.fileState(of: clip) {
+                Button { model.fileAction(clip) } label: {
+                    Label(fileState.actionTitle, systemImage: fileState.actionImage)
+                }
+                .buttonStyle(ThemeButtonStyle(isPrimary: true))
+            } else {
+                Button { model.copy(clip) } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(ThemeButtonStyle(isPrimary: true))
+                .keyboardShortcut("c", modifiers: .command)
             }
-            .buttonStyle(ThemeButtonStyle(isPrimary: true))
-            .keyboardShortcut("c", modifiers: .command)
             shareButton
             iconButton(clip.isPinned ? "pin.fill" : "pin", label: "Pin", isOn: clip.isPinned) {
                 model.togglePin(clip)
@@ -92,7 +99,13 @@ struct ClipDetailView: View {
 
     @ViewBuilder
     private var shareButton: some View {
-        if let url = model.imageURL(of: clip) {
+        if case .saved(let url) = model.fileState(of: clip) {
+            ShareLink(item: url) { iconLabel("square.and.arrow.up", isOn: false) }
+                .accessibilityLabel("Share")
+        } else if clip.kind == .file {
+            // Nothing to share until the file is here.
+            EmptyView()
+        } else if let url = model.imageURL(of: clip) {
             ShareLink(item: url) { iconLabel("square.and.arrow.up", isOn: false) }
                 .accessibilityLabel("Share")
         } else {
@@ -187,6 +200,35 @@ struct ClipDetailView: View {
             .insetBlock()
         case .code:
             codeBox
+        case .file:
+            let state = model.fileState(of: clip) ?? .remote
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 14) {
+                    Image(systemName: "doc.fill")
+                        .font(.system(size: 34))
+                        .foregroundStyle(Theme.accentText)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(clip.title)
+                            .font(.headline)
+                            .foregroundStyle(Theme.text)
+                            .textSelection(.enabled)
+                        Text(state.status(origin: clip.fromName))
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                if case .fetching(let fraction) = state {
+                    ProgressView(value: fraction)
+                        .tint(Theme.accentText)
+                }
+                if state == .remote {
+                    Text("Fetch downloads it from \(clip.fromName ?? "the other device"), which must be on and on this network.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textMuted)
+                }
+            }
+            .insetBlock()
         case .text:
             Text(clip.text ?? "")
                 .font(.body)

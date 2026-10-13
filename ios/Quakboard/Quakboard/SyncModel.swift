@@ -59,6 +59,17 @@ final class SyncModel: ObservableObject {
     @Published private(set) var toast: Toast?
     /// Something new is on the clipboard that the user might want to send.
     @Published private(set) var hasNewClipboard = false
+    /// Downloads in progress, from 0 to 1, by clip id.
+    @Published private(set) var fetchProgress: [Int64: Double] = [:]
+    /// A fetched file to show with Quick Look.
+    @Published var previewURL: URL?
+
+    /// Where an offered file is, from this device's point of view.
+    enum FileState: Equatable {
+        case remote
+        case fetching(Double)
+        case saved(URL)
+    }
 
     // Simulators share the Mac's network, where the desktop app already
     // listens on the default port; iPhone and iPad simulators get their own,
@@ -87,6 +98,8 @@ final class SyncModel: ObservableObject {
     /// The copy last tried automatically, so a "Don't Allow" isn't asked again
     /// every time the app comes back.
     private var autoSendAttempt: Int?
+    private var fetchTasks: [Int64: Task<Void, Never>] = [:]
+    private var fetchBackgroundTasks: [Int64: UIBackgroundTaskIdentifier] = [:]
 
     func start() async {
         guard node == nil else { return }
@@ -323,6 +336,125 @@ final class SyncModel: ObservableObject {
         return (page.pinned + page.recent).first { $0.id == id }
     }
 
+    func fileState(of item: HistoryItem) -> FileState? {
+        guard item.kind == .file, let id = item.id else { return nil }
+        if let progress = fetchProgress[id] {
+            return .fetching(progress)
+        }
+        // Back to remote if the user deleted it in the Files app.
+        if let name = item.savedFile {
+            let url = URL.documentsDirectory.appending(path: name)
+            if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
+                return .saved(url)
+            }
+        }
+        return .remote
+    }
+
+    /// Fetch, Cancel or Open, whichever fits the file's state.
+    func fileAction(_ item: HistoryItem) {
+        switch fileState(of: item) {
+        case .remote: fetch(item)
+        case .fetching: item.id.flatMap { fetchTasks[$0] }?.cancel()
+        case .saved(let url): previewURL = url
+        case nil: break
+        }
+    }
+
+    /// Downloads into Documents, which the Files app shows as
+    /// On My iPhone → Quakboard. It keeps going for iOS's short background
+    /// time if the user switches apps; when that runs out it's cancelled, and
+    /// the partial file is deleted.
+    private func fetch(_ item: HistoryItem) {
+        guard let node, let store, let id = item.id, let file = item.remoteFile, fetchTasks[id] == nil else { return }
+        fetchProgress[id] = 0
+        let relay = ProgressRelay { [weak self] fraction in
+            Task { @MainActor in
+                if self?.fetchProgress[id] != nil {
+                    self?.fetchProgress[id] = fraction
+                }
+            }
+        }
+        fetchBackgroundTasks[id] = UIApplication.shared.beginBackgroundTask(withName: "Fetch file") { [weak self] in
+            // iOS is ending the background time: stop now, deleting the partial file.
+            MainActor.assumeIsolated {
+                self?.fetchTasks[id]?.cancel()
+                self?.endFetchBackgroundTask(id)
+            }
+        }
+        fetchTasks[id] = Task {
+            do {
+                let path = try await node.fetchFile(
+                    file: file,
+                    destDir: URL.documentsDirectory.path(percentEncoded: false),
+                    progress: relay
+                )
+                try store.setSavedFile(id, name: URL(fileURLWithPath: path).lastPathComponent)
+                showToast("Saved to Files")
+            } catch {
+                if !Task.isCancelled {
+                    showToast(Self.message(error), isError: true)
+                }
+            }
+            fetchProgress[id] = nil
+            fetchTasks[id] = nil
+            reloadHistory()
+            endFetchBackgroundTask(id)
+        }
+    }
+
+    private func endFetchBackgroundTask(_ id: Int64) {
+        if let task = fetchBackgroundTasks.removeValue(forKey: id) {
+            UIApplication.shared.endBackgroundTask(task)
+        }
+    }
+
+    /// From the Files picker. The file is copied into Documents first: a
+    /// picked file is only lent to the app for a moment, and it must stay put
+    /// until the other devices fetch it, which they do from this device while
+    /// the app is open.
+    func offerFile(at picked: URL) {
+        guard let node, let store else { return }
+        guard isSyncEnabled else {
+            showToast("Turn on Sync in Settings to send", isError: true)
+            return
+        }
+        Task {
+            do {
+                let copy = try await Task.detached { try Self.copyIntoDocuments(picked) }.value
+                let size = try copy.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                let mime = UTType(filenameExtension: copy.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+                try store.saveSentFile(name: copy.lastPathComponent, size: Int64(size), mime: mime)
+                reloadHistory()
+                let reached = try await node.offerFile(path: copy.path(percentEncoded: false), mime: mime)
+                showToast(reached == 0
+                    ? "Saved, but no paired device was reached"
+                    : "Offered to \(reached) device\(reached == 1 ? "" : "s"). Keep Quakboard open until it's fetched.")
+            } catch {
+                showToast(Self.message(error), isError: true)
+            }
+        }
+    }
+
+    /// Never replaces a file already there: "report.pdf" becomes "report 2.pdf".
+    nonisolated private static func copyIntoDocuments(_ picked: URL) throws -> URL {
+        let isAccessing = picked.startAccessingSecurityScopedResource()
+        defer {
+            if isAccessing { picked.stopAccessingSecurityScopedResource() }
+        }
+        let name = picked.lastPathComponent
+        let base = (name as NSString).deletingPathExtension
+        let ext = (name as NSString).pathExtension
+        var copy = URL.documentsDirectory.appending(path: name)
+        var number = 2
+        while FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)) {
+            copy = URL.documentsDirectory.appending(path: ext.isEmpty ? "\(base) \(number)" : "\(base) \(number).\(ext)")
+            number += 1
+        }
+        try FileManager.default.copyItem(at: picked, to: copy)
+        return copy
+    }
+
     func imageURL(of item: HistoryItem) -> URL? {
         guard let store, let file = item.imageFile else { return nil }
         return store.imagesDir.appending(path: file)
@@ -505,6 +637,10 @@ final class SyncModel: ObservableObject {
         reloadHistory()
     }
 
+    fileprivate func receivedOffer() {
+        reloadHistory()
+    }
+
     fileprivate func failedToSave(_ error: Error) {
         showToast("Couldn't save to history: \(Self.message(error))", isError: true)
     }
@@ -539,9 +675,29 @@ private final class Delegate: SyncDelegate {
         }
     }
 
-    func onFileOffer(file: RemoteFileInfo) {}
+    func onFileOffer(file: RemoteFileInfo) {
+        do {
+            try history.saveOffer(file)
+            Task { @MainActor in model.receivedOffer() }
+        } catch {
+            Task { @MainActor in model.failedToSave(error) }
+        }
+    }
 
     func onPairingEvent(event: PairingEvent) {
         Task { @MainActor in model.handle(event) }
+    }
+}
+
+/// Passes a fetch's progress on as a fraction. Called on a background thread.
+private final class ProgressRelay: FetchProgress {
+    let report: @Sendable (Double) -> Void
+
+    init(report: @escaping @Sendable (Double) -> Void) {
+        self.report = report
+    }
+
+    func onProgress(done: UInt64, total: UInt64) {
+        report(total > 0 ? Double(done) / Double(total) : 0)
     }
 }

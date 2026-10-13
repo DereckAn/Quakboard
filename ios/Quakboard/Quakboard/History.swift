@@ -3,14 +3,14 @@ import GRDB
 import QuakboardSync
 
 struct HistoryItem: Codable, Identifiable, Sendable, FetchableRecord, MutablePersistableRecord {
-    /// The desktop's content types for text, plus images.
+    /// The desktop's content types for text, plus images and offered files.
     enum Kind: String, Codable, Sendable, CaseIterable {
-        case text, link, code, color, image
+        case text, link, code, color, image, file
 
-        /// What the sender called it; anything unknown is plain text.
+        /// What the sender called some text; anything unknown is plain text.
         init(contentType: String) {
             let kind = Kind(rawValue: contentType) ?? .text
-            self = kind == .image ? .text : kind
+            self = kind == .image || kind == .file ? .text : kind
         }
     }
 
@@ -23,6 +23,29 @@ struct HistoryItem: Codable, Identifiable, Sendable, FetchableRecord, MutablePer
     var fromName: String?
     var createdAt: Date
     var isPinned = false
+    /// For `.file`: the offer, fetched only when the user asks.
+    var offerId: String?
+    var originId: String?
+    var fileName: String?
+    var fileSize: Int64?
+    var fileMime: String?
+    var sha256: String?
+    /// For `.file`: its name in Documents once fetched.
+    var savedFile: String?
+
+    /// What `fetchFile` needs, for a `.file` item.
+    var remoteFile: RemoteFileInfo? {
+        guard kind == .file, let offerId, let originId, let fileName, let fileSize, let sha256 else { return nil }
+        return RemoteFileInfo(
+            offerId: offerId,
+            originId: originId,
+            originName: fromName ?? "",
+            name: fileName,
+            size: UInt64(fileSize),
+            mime: fileMime ?? "application/octet-stream",
+            sha256: sha256
+        )
+    }
 
     static let databaseTableName = "item"
 
@@ -81,6 +104,17 @@ final class History: Sendable {
                 }
             }
         }
+        migrator.registerMigration("v4: file offers") { db in
+            try db.alter(table: HistoryItem.databaseTableName) { t in
+                t.add(column: "offerId", .text)
+                t.add(column: "originId", .text)
+                t.add(column: "fileName", .text)
+                t.add(column: "fileSize", .integer)
+                t.add(column: "fileMime", .text)
+                t.add(column: "sha256", .text)
+                t.add(column: "savedFile", .text)
+            }
+        }
         try migrator.migrate(db)
     }
 
@@ -99,6 +133,50 @@ final class History: Sendable {
                 var item = HistoryItem(kind: kind, text: text, createdAt: .now)
                 try item.insert(db)
             }
+        }
+    }
+
+    /// The same offer again moves to the top instead of being stored twice.
+    func saveOffer(_ file: RemoteFileInfo) throws {
+        try db.write { db in
+            if var item = try HistoryItem.filter(Column("offerId") == file.offerId).fetchOne(db) {
+                item.createdAt = .now
+                try item.update(db)
+            } else {
+                var item = HistoryItem(
+                    kind: .file,
+                    fromName: file.originName,
+                    createdAt: .now,
+                    offerId: file.offerId,
+                    originId: file.originId,
+                    fileName: file.name,
+                    fileSize: Int64(clamping: file.size),
+                    fileMime: file.mime,
+                    sha256: file.sha256
+                )
+                try item.insert(db)
+            }
+        }
+    }
+
+    /// A file this device offered: already "saved", since it's in Documents.
+    func saveSentFile(name: String, size: Int64, mime: String) throws {
+        try db.write { db in
+            var item = HistoryItem(
+                kind: .file,
+                createdAt: .now,
+                fileName: name,
+                fileSize: size,
+                fileMime: mime,
+                savedFile: name
+            )
+            try item.insert(db)
+        }
+    }
+
+    func setSavedFile(_ id: Int64, name: String) throws {
+        try db.write { db in
+            _ = try HistoryItem.filter(id: id).updateAll(db, Column("savedFile").set(to: name))
         }
     }
 
@@ -135,13 +213,15 @@ final class History: Sendable {
         }
     }
 
-    /// Newest first. `search` matches text, case-insensitively; `kind` nil is all.
+    /// Newest first. `search` matches text and file names, case-insensitively;
+    /// `kind` nil is all.
     func page(search: String, kind: HistoryItem.Kind?) throws -> HistoryPage {
         try db.read { db in
             var request = HistoryItem.order(Column("createdAt").desc)
             let search = search.trimmingCharacters(in: .whitespaces)
             if !search.isEmpty {
-                request = request.filter(Column("text").like("%\(search)%"))
+                let pattern = "%\(search)%"
+                request = request.filter(Column("text").like(pattern) || Column("fileName").like(pattern))
             }
             if let kind {
                 request = request.filter(Column("kind") == kind.rawValue)

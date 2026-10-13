@@ -42,7 +42,12 @@ struct ClipsView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             AppTitle(subtitle: isPinnedOnly ? "Pinned" : "All Clips")
-            SearchField(text: $model.search)
+            HStack(spacing: 8) {
+                SearchField(text: $model.search)
+                if !isPinnedOnly {
+                    SendFileButton(model: model)
+                }
+            }
         }
         .headerBar()
     }

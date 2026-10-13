@@ -1,6 +1,6 @@
 # Plan: iPhone/iPad and Android apps
 
-**Status:** Phases 1–4 done (see [Phase 1](#what-was-built-in-phase-1), [Phase 2](#what-was-built-in-phase-2), [Phase 3](#what-was-built-in-phase-3) and [Phase 4](#what-was-built-in-phase-4)). Phase 5, iOS files, is next.
+**Status:** Phases 1–5 done (see [Phase 1](#what-was-built-in-phase-1), [Phase 2](#what-was-built-in-phase-2), [Phase 3](#what-was-built-in-phase-3), [Phase 4](#what-was-built-in-phase-4) and [Phase 5](#what-was-built-in-phase-5)). iOS v1 is complete. Next is Phase 6 (Android) or Phase 7 (release).
 
 ## Goal
 Quakboard on iPhone, iPad and later Android, syncing with the desktop app: text, images and files, using the same pairing and encryption.
@@ -271,7 +271,8 @@ Built on `feat/build-ios` and `feat/listener`. Where it differs from the plan ab
    - **Devices are keyed by the `id` in their TXT record,** because Bonjour can rename a re-announced service (`id (2)`) and list one device many times.
    - **LAN addresses win over link-local (169.254.x) and loopback,** on the phone and in the core's `pick_address`, which the desktop uses.
 4. **History uses GRDB, not SwiftData,** to keep iOS 16.
-   - **What's stored:** text with the desktop's type (`on_text` gained `content_type` in the FFI), images as PNG files, and pins.
+   - **What's stored:** text with its type, images as PNG files, and pins.
+   - **Type detection is shared:** the desktop's `detect_content_type` moved into the core (`content.rs`). The FFI's `send_text` sends the detected type, and the app uses it for what it sends. A migration relabeled text saved before that.
    - **Duplicates:** a repeated text moves to the top and keeps its pin.
    - **Limits:** the newest 500 unpinned items, with no paging (marked `ponytail:`); search with `LIKE`.
    - **Delete** removes the clip and its image file.
@@ -313,6 +314,39 @@ Built on `feat/build-ios` and `feat/listener`. Where it differs from the plan ab
 - **Receiving:** file offers become items "on Laptop". **Fetch** saves into the app's Documents folder (visible in the Files app, via `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`), with a progress bar and Cancel.
 - **Sending:** the Share Extension or a document picker creates an offer, using the same device picker as the desktop. The phone serves the fetch only while the app is open, and the UI says so.
 - **Big files:** use `beginBackgroundTask` to finish a running transfer if the user switches apps, which iOS allows for a short time.
+
+### What was built in Phase 5
+Built on `feat/files-ios`. Where it differs from the plan above, this section is what's true.
+
+1. **Receiving.** An offer becomes a **File** clip: the name, the size, and "On La-ruina".
+   - **Storage:** a fourth database migration stores the offer's details, plus the saved file's name once it's fetched.
+   - **The same offer twice** moves to the top instead of appearing twice.
+   - **Where it shows:** a **Files** filter and sidebar entry. Search also matches file names.
+2. **One button that follows the file:**
+   - **Fetch** downloads it into Documents, with the SHA-256 checked by the core.
+   - **Cancel**, with a progress bar while it downloads. Cancelling deletes the partial file.
+   - **Open** shows it with Quick Look.
+   - **Back to Fetch** if the user deletes the file in the Files app.
+   - **The detail view** adds Share once the file is saved.
+3. **The Files app** shows Documents as *On My iPhone → Quakboard*.
+   - **`UIFileSharingEnabled` lives in `Info.plist`:** Xcode ignores it as a generated build setting. `LSSupportsOpeningDocumentsInPlace` works as a build setting.
+4. **Big files:** each download asks for background time. If it runs out, the download is cancelled instead of being cut off half-written.
+5. **Sending,** from a document picker in the app (next to search on iPhone, next to Paste on iPad).
+   - **The picked file is copied into Documents,** because a picked file is only lent to the app for a moment and must stay put until it's fetched.
+   - **It's offered to every paired device,** not through a device picker, matching Paste & Send.
+   - **The toast says to keep Quakboard open** until it's fetched.
+6. **The FFI gained `offer_file(path, mime)`.** It hashes the file off the async workers, records the offer in **`offers.json`** beside the pairing keys (`offers.rs`), and sends it.
+   - **`lookup_offer` reads that file,** so fetches from the phone are served instead of refused. The core still re-checks the file against its stamp and hash before sending.
+   - **Two tests:** a phone's offer is fetched intact by another device, and offering a missing file is an error.
+7. **The Share Extension doesn't send files.** The phone serves a file only while the app is open, so an offer made by an extension that then exits couldn't be fetched until the user opened Quakboard.
+
+**Check:** passed on a real iPhone and a Mac. Desktop → phone: Fetch, progress, Cancel, Open, and the file in the Files app. Phone → desktop: the desktop fetched an offered file while the phone app was open.
+
+**Left for later:**
+- **A device picker for sending,** like the desktop's.
+- **Pruning `offers.json`,** whose offers are never removed (marked `ponytail:`).
+- **Offers store the file's full path,** so they can't be fetched after a reinstall moves the app's folder. Offer the file again.
+- **Deleting a File clip** leaves the file in Files, on purpose: it's the user's document.
 
 ## Phase 6: Android
 - **Build:** `cargo-ndk` for `arm64-v8a`, `armeabi-v7a` and `x86_64`, with UniFFI Kotlin bindings, as a Gradle module `:quakboard-sync`.

@@ -69,8 +69,9 @@ A native iOS app for iPhone and iPad uses the same sync core. Text and images al
 - **History** of what arrives, with search, pins and the same date groups as the desktop.
 - **Paste & Send**, and an optional automatic send when the app opens.
 - **"Share to Quakboard"** from any app: WhatsApp messages, Safari links and Photos.
+- **Files both ways:** fetch what a computer offers into the Files app, or offer a file from the phone.
 
-It isn't on the App Store yet. To build it, see [iOS](#ios-on-a-mac-with-xcode). Next are files (Phase 5), then Android, as tracked in [docs/MOBILE_PLAN.md](docs/MOBILE_PLAN.md).
+It isn't on the App Store yet. To build it, see [iOS](#ios-on-a-mac-with-xcode). Android comes next, as tracked in [docs/MOBILE_PLAN.md](docs/MOBILE_PLAN.md).
 
 ---
 
