@@ -10,7 +10,7 @@ interface Props {
 
 const {
   title,
-  description = "Quackboard is a local-first clipboard manager: full clipboard history, instant search, pinned snippets, and optional end-to-end encrypted sync.",
+  description = "Quakboard is a local-first clipboard manager: full clipboard history, instant search, pinned snippets, and optional end-to-end encrypted sync.",
 } = Astro.props;
 ---
 
@@ -23,9 +23,9 @@ const {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="generator" content={Astro.generator} />
     <meta name="description" content={description} />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
 
-    <!-- Fonts: Space Grotesk (headings) · Inter (body) · JetBrains Mono (code) -->
+    <!-- Fonts: Manrope (headings and body) · JetBrains Mono (code) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link
       rel="preconnect"
@@ -34,7 +34,7 @@ const {
     />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap"
     />
 
     <title>{title}</title>

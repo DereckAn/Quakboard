@@ -3,18 +3,18 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 ---
 
 <DocsLayout
-  title="Privacy & Data — Quackboard Docs"
+  title="Privacy & Data — Quakboard Docs"
   heading="Privacy & Data"
   summary="The technical detail of where your clipboard lives, what leaves the device, and the controls you have. For the plain-language version, see the privacy page."
 >
   <h2>Where history is stored</h2>
   <p>
-    Everything Quackboard captures goes into a single SQLite database on your
+    Everything Quakboard captures goes into a single SQLite database on your
     machine:
   </p>
   <ul>
     <li><strong>macOS</strong> — <code>~/Library/Application Support/quackboard/clipboard.db</code></li>
-    <li><strong>Windows</strong> — <code>%APPDATA%\Quackboard\clipboard.db</code></li>
+    <li><strong>Windows</strong> — <code>%APPDATA%\Quakboard\clipboard.db</code></li>
     <li><strong>Linux</strong> — <code>~/.local/share/quackboard/clipboard.db</code></li>
   </ul>
   <p>
@@ -27,7 +27,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
   <p>
     With sync turned off — the default — <strong
       >nothing you copy ever leaves your computer</strong
-    >. Quackboard makes no network requests for clipboard data, runs fully
+    >. Quakboard makes no network requests for clipboard data, runs fully
     offline, and has no analytics or telemetry. The only outbound request the
     app can make is an optional check for updates, which sends just a version
     number.
@@ -45,14 +45,14 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
   <p>
     Toggle <strong>Pause capture</strong> from the menu bar (or <code
       >⌘⇧.</code
-    >) and Quackboard stops recording until you turn it back on. Anything you
+    >) and Quakboard stops recording until you turn it back on. Anything you
     copy in that window is never written to the database. Use it for passwords,
     one-time codes, and anything you'd rather not keep.
   </p>
 
   <h2>Sensitive-content filtering</h2>
   <p>
-    Quackboard automatically skips clipboard entries that apps mark as
+    Quakboard automatically skips clipboard entries that apps mark as
     confidential — most password managers set this flag, so copied passwords are
     ignored by default. You can also add your own rules to exclude content
     matching a pattern, like anything that looks like a card number.
