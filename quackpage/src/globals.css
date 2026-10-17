@@ -8,6 +8,7 @@
    ============================================================================ */
 @theme {
   --color-bg: #fff8f2;
+  --color-bg-alt: #fef2e2; /* alternate sections */
   --color-surface: #f8ecdd; /* cards, panels */
   --color-surface-2: #f2e7d7; /* hover / nested surfaces */
   --color-border: #e7dbc9;
@@ -21,6 +22,10 @@
   --color-accent-strong: #35455d; /* hover */
   --color-accent-ink: #ffffff; /* text on accent fills */
 
+  /* the code box: dark in both appearances, like the apps */
+  --color-code-bg: #1e2f46;
+  --color-code-text: #fff8f2;
+
   --font-heading: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --font-body: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
@@ -31,6 +36,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --color-bg: #0c141f;
+    --color-bg-alt: #101824;
     --color-surface: #141c28;
     --color-surface-2: #1a2332;
     --color-border: #323a46;
@@ -43,6 +49,9 @@
     --color-accent: #ddd2bd;
     --color-accent-strong: #e9e1d9;
     --color-accent-ink: #0c141f;
+
+    --color-code-bg: #070f1a;
+    --color-code-text: #dbe3f4;
   }
 }
 

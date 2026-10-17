@@ -2,238 +2,333 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import AppWindow from "../components/AppWindow.astro";
 import Icon from "../components/Icon.astro";
+import { download } from "../releases";
+
+const platforms = [
+  { icon: "apple", label: "macOS · Apple Silicon & Intel" },
+  { icon: "windows", label: "Windows · x64 & ARM64" },
+  { icon: "linux", label: "Linux · .deb, .rpm, AppImage" },
+  { icon: "device", label: "iPhone & iPad · coming soon" },
+];
 
 const features = [
   {
     icon: "history",
-    title: "Complete history",
-    body: "Everything you copy is captured automatically — text, code, links, colors, images, and files. Scroll back through days, not just the last clip.",
+    title: "Everything you copy",
+    body: "Text, code, links, colors, images and files, grouped by day. Code knows its language, links show a preview, and colors convert between HEX, RGB, HSL and OKLCH.",
+    tags: ["Text", "Code", "Links", "Colors", "Images", "Files"],
   },
   {
     icon: "search",
-    title: "Search that's instant",
-    body: "Full-text search across your entire history with ranked results. Find that API key or address from last Tuesday before you finish typing it.",
-  },
-  {
-    icon: "pin",
-    title: "Pinned snippets",
-    body: "Pin the things you paste constantly — signatures, commands, boilerplate — and give them names. They stay one shortcut away, forever.",
+    title: "Find it, paste it",
+    body: "Press the hotkey anywhere, type a few letters, and press Enter to paste into the app you were using. Search covers your whole history.",
+    keys: ["⌘", "⇧", "V"],
   },
   {
     icon: "sync",
-    title: "Optional sync",
-    body: "Turn on end-to-end encrypted sync to share history across your Mac, PC, and Linux box. Off by default. Encrypted before it leaves the device.",
+    title: "Syncs as you copy",
+    body: "Pair two devices once with a 6-digit code. From then on, text and images you copy on one appear on the other. Image sync can be turned off.",
+    note: "Pair once · then it just works",
   },
   {
-    icon: "bolt",
-    title: "Built to disappear",
-    body: "A global hotkey brings it up, an arrow key picks an entry, Enter pastes. It closes the moment you're done. No window juggling.",
+    icon: "download",
+    title: "Files on request",
+    body: "Files are offered, not pushed. The other device lists the file, and it only downloads when you choose Fetch, checked against its hash.",
+    note: "Nothing big moves unless you ask",
+  },
+];
+
+const privacy = [
+  {
+    icon: "lock",
+    title: "Stays on your device",
+    body: "Your history lives in a database on your own computer or phone. Quakboard has no servers to send it to.",
+    tag: "Local first",
+  },
+  {
+    icon: "eye",
+    title: "No account, no tracking",
+    body: "Nothing to sign up for. No analytics, no telemetry, no ads.",
+    tag: "Zero telemetry",
+  },
+  {
+    icon: "globe",
+    title: "Your network only",
+    body: "Devices talk directly over your local network. The internet is only used for link previews and update checks.",
+    tag: "No cloud",
   },
   {
     icon: "shield",
-    title: "Local-first by design",
-    body: "Your clipboard lives in a database on your machine. No account required, no telemetry, works fully offline. You can read every byte.",
+    title: "Encrypted end to end",
+    body: "Pairing uses SPAKE2, so the code never crosses the network. Everything after that is encrypted with ChaCha20-Poly1305.",
+    tag: "Open source",
   },
 ];
 
-const steps = [
-  {
-    n: "01",
-    title: "Copy like you always do",
-    body: "Quakboard watches the clipboard quietly in the background and saves each new item with smart type detection — no extra step.",
-  },
-  {
-    n: "02",
-    title: "Summon with a shortcut",
-    body: "Press ⌘⇧V (or your own binding) anywhere. The history opens where your cursor is, already focused on the search field.",
-  },
-  {
-    n: "03",
-    title: "Find it, paste it, move on",
-    body: "Type a few letters, arrow to the result, hit Enter. It pastes into the app you were in and gets out of your way.",
-  },
-];
+const desktopFiles = {
+  mac: "Quakboard-macOS-AppleSilicon.dmg",
+  macIntel: "Quakboard-macOS-Intel.dmg",
+  win: "Quakboard-Windows-x64-Setup.exe",
+  winArm: "Quakboard-Windows-arm64-Setup.exe",
+};
+const links = Object.fromEntries(
+  Object.entries(desktopFiles).map(([k, f]) => [k, download(f)]),
+);
 ---
 
-<BaseLayout title="Quakboard — a clipboard manager that remembers">
-  <!-- ── HERO (asymmetric, left-weighted) ─────────────────────────────── -->
-  <section class="shell relative pt-20 pb-24 md:pt-28 md:pb-32">
-    <!-- faint amber glow, single hue, no gradient stack -->
+<BaseLayout title="Quakboard: your clipboard, on all your devices">
+  <!-- ── HERO ─────────────────────────────────────────────────────────── -->
+  <div class="relative overflow-hidden">
     <div
       aria-hidden="true"
-      class="pointer-events-none absolute -top-24 right-0 h-[420px] w-[420px] rounded-full bg-accent/10 blur-[120px]"
+      class="pointer-events-none absolute -top-48 left-1/2 h-[480px] w-[980px] -translate-x-1/2 bg-gradient-to-b from-surface-2/70 to-transparent blur-3xl"
     >
     </div>
 
-    <div class="grid items-center gap-14 lg:grid-cols-[1.05fr_1fr]">
-      <div data-reveal>
-        <span
-          class="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs text-muted"
-        >
-          <span class="h-1.5 w-1.5 rounded-full bg-accent"></span>
-          v1.1 — now with encrypted sync
+    <section class="shell relative pt-14 pb-20 md:pt-20">
+      <div class="mx-auto flex max-w-3xl flex-col items-center text-center" data-reveal>
+        <span class="inline-flex items-center gap-2 rounded-full bg-surface-2 px-3 py-1.5 text-xs text-muted shadow-sm">
+          <span class="h-2 w-2 rounded-full bg-accent"></span>
+          Free and open source
         </span>
 
-        <h1 class="mt-7 text-5xl font-bold sm:text-6xl md:text-7xl">
-          Your clipboard,<br />
-          <span class="text-accent">with a memory.</span>
+        <h1 class="mt-6 text-4xl font-bold text-accent md:text-5xl md:leading-[1.15]">
+          A private clipboard that syncs between your own devices.
         </h1>
 
-        <p class="mt-7 max-w-xl text-lg leading-relaxed text-muted">
-          Quakboard keeps a searchable history of everything you copy, lets you
-          pin the snippets you reuse, and syncs across your devices — without
-          ever sending your clipboard somewhere you can't see.
+        <p class="mt-5 max-w-2xl text-lg text-muted">
+          Quakboard keeps everything you copy, finds it in a few keystrokes, and
+          sends it to your other computers and phones over your own network.
+          No cloud, no account.
         </p>
 
-        <div class="mt-9 flex flex-wrap items-center gap-3">
+        <div class="mt-8 flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
           <a
+            id="download-cta"
             href="/download"
-            class="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-3 text-sm font-semibold text-accent-ink transition-colors hover:bg-accent-strong"
+            class="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-6 py-3 font-semibold text-accent-ink shadow-md transition-colors hover:bg-accent-strong sm:w-auto"
           >
-            <Icon name="download" size={18} stroke={2} />
-            Download for free
+            <Icon name="download" size={19} stroke={2} />
+            <span id="download-label">Download Quakboard</span>
           </a>
           <a
-            href="/docs/getting-started"
-            class="inline-flex items-center gap-2 rounded-lg border border-border px-5 py-3 text-sm font-medium text-text transition-colors hover:bg-surface"
+            href="/docs/sync"
+            class="flex w-full items-center justify-center gap-2 rounded-lg bg-surface px-6 py-3 font-semibold text-accent shadow-sm transition-colors hover:bg-surface-2 sm:w-auto"
           >
-            Read the docs
-            <Icon name="arrow-right" size={16} />
+            <Icon name="sync" size={19} />
+            How sync works
           </a>
         </div>
+        <a href="/download" class="mt-4 text-sm text-muted underline-offset-4 hover:text-text hover:underline">
+          All systems and versions
+        </a>
 
-        <p class="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-faint">
-          <span class="flex items-center gap-1.5"
-            ><Icon name="check" size={14} class="text-accent" /> No account needed</span
-          >
-          <span class="flex items-center gap-1.5"
-            ><Icon name="check" size={14} class="text-accent" /> Works offline</span
-          >
-          <span class="flex items-center gap-1.5"
-            ><Icon name="check" size={14} class="text-accent" /> macOS · Windows · Linux</span
-          >
-        </p>
+        <ul class="mt-8 flex flex-wrap items-center justify-center gap-1.5 text-xs text-muted">
+          {
+            platforms.map((p) => (
+              <li class="flex items-center gap-1.5 rounded-full bg-bg-alt px-3 py-1 shadow-sm">
+                <Icon name={p.icon} size={14} class="text-accent" />
+                {p.label}
+              </li>
+            ))
+          }
+        </ul>
       </div>
 
-      <!-- the mockup sits lower and slightly off-grid -->
-      <div data-reveal data-delay="120" class="lg:translate-y-6">
+      <div class="mt-14" data-reveal data-delay="120">
         <AppWindow />
       </div>
-    </div>
-  </section>
+    </section>
+  </div>
 
-  <!-- ── CORE FEATURES ────────────────────────────────────────────────── -->
-  <section class="shell py-8">
-    <div class="max-w-2xl" data-reveal>
-      <p class="font-mono text-xs uppercase tracking-widest text-accent">
-        What it does
-      </p>
-      <h2 class="mt-4 text-4xl font-bold md:text-5xl">
-        Small tool. Disproportionate relief.
-      </h2>
-      <p class="mt-5 text-lg text-muted">
-        The clipboard is the most-used feature of any computer and the least
-        respected. Quakboard treats it like infrastructure.
-      </p>
-    </div>
-
-    <div class="mt-14 grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
-      {
-        features.map((f, i) => (
-          <article
-            class="lift bg-surface p-7"
-            data-reveal
-            data-delay={(i % 3) * 80}
-          >
-            <span class="grid h-10 w-10 place-items-center rounded-lg border border-border bg-bg text-accent">
-              <Icon name={f.icon} size={20} />
-            </span>
-            <h3 class="mt-5 text-lg font-semibold">{f.title}</h3>
-            <p class="mt-2.5 text-sm leading-relaxed text-muted">{f.body}</p>
-          </article>
-        ))
-      }
-    </div>
-  </section>
-
-  <!-- ── HOW IT WORKS ─────────────────────────────────────────────────── -->
-  <section class="shell py-28">
-    <div class="grid gap-14 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
-      <div data-reveal class="lg:sticky lg:top-28">
-        <p class="font-mono text-xs uppercase tracking-widest text-accent">
-          How it works
-        </p>
-        <h2 class="mt-4 text-4xl font-bold md:text-5xl">
-          Three keystrokes from copy to paste.
-        </h2>
-        <p class="mt-5 text-muted">
-          No new habits to learn. Quakboard slots into the muscle memory you
-          already have.
-        </p>
-        <div
-          class="mt-8 inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-3 font-mono text-sm"
-        >
-          <kbd class="rounded bg-surface-2 px-2 py-1 text-xs">⌘</kbd>
-          <kbd class="rounded bg-surface-2 px-2 py-1 text-xs">⇧</kbd>
-          <kbd class="rounded bg-surface-2 px-2 py-1 text-xs">V</kbd>
-          <span class="ml-1 text-faint">— rebind it to anything</span>
+  <!-- ── FEATURES ─────────────────────────────────────────────────────── -->
+  <section class="bg-bg-alt py-20">
+    <div class="shell">
+      <div class="mb-12 flex flex-col justify-between gap-4 md:flex-row md:items-end" data-reveal>
+        <div>
+          <p class="font-mono text-xs uppercase tracking-widest text-muted">What it does</p>
+          <h2 class="mt-2 text-3xl font-bold text-accent md:text-4xl">
+            Your clipboard, with a memory.
+          </h2>
         </div>
+        <p class="max-w-md text-muted">
+          Quakboard sits quietly in the menu bar or tray and saves each thing you
+          copy. It appears when you press the hotkey and hides when you're done.
+        </p>
       </div>
 
-      <ol class="space-y-px overflow-hidden rounded-xl border border-border bg-border">
+      <div class="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
         {
-          steps.map((s) => (
-            <li class="bg-surface p-8" data-reveal>
-              <div class="flex items-baseline gap-5">
-                <span class="font-heading text-3xl font-bold text-accent/40">
-                  {s.n}
+          features.map((f, i) => (
+            <article
+              class="flex flex-col justify-between rounded-xl bg-surface p-6 shadow-sm transition-shadow hover:shadow-md"
+              data-reveal
+              data-delay={i * 60}
+            >
+              <div>
+                <span class="mb-5 grid h-10 w-10 place-items-center rounded-lg bg-accent text-accent-ink">
+                  <Icon name={f.icon} size={20} />
                 </span>
-                <div>
-                  <h3 class="text-xl font-semibold">{s.title}</h3>
-                  <p class="mt-2 leading-relaxed text-muted">{s.body}</p>
-                </div>
+                <h3 class="mb-2 text-base font-semibold text-accent">{f.title}</h3>
+                <p class="text-sm leading-relaxed text-muted">{f.body}</p>
               </div>
-            </li>
+              <div class="mt-6">
+                {f.tags && (
+                  <div class="flex flex-wrap gap-1.5">
+                    {f.tags.map((t) => (
+                      <span class="rounded bg-bg px-2 py-1 font-mono text-[11px] text-muted shadow-sm">{t}</span>
+                    ))}
+                  </div>
+                )}
+                {f.keys && (
+                  <div class="flex items-center gap-1.5">
+                    {f.keys.map((k) => (
+                      <kbd class="rounded bg-bg px-2 py-1 font-mono text-xs text-text shadow-sm">{k}</kbd>
+                    ))}
+                    <span class="ml-1 text-xs text-faint">or your own</span>
+                  </div>
+                )}
+                {f.note && (
+                  <p class="rounded-lg bg-bg px-3 py-2 font-mono text-[11px] text-muted">{f.note}</p>
+                )}
+              </div>
+            </article>
           ))
         }
-      </ol>
+      </div>
     </div>
   </section>
 
-  <!-- ── FOOTER CTA ───────────────────────────────────────────────────── -->
-  <section class="shell">
-    <div
-      class="relative overflow-hidden rounded-2xl border border-border bg-surface px-8 py-16 text-center md:px-16 md:py-20"
-      data-reveal
-    >
-      <div
-        aria-hidden="true"
-        class="pointer-events-none absolute -bottom-32 left-1/2 h-[360px] w-[360px] -translate-x-1/2 rounded-full bg-accent/10 blur-[120px]"
-      >
+  <!-- ── PRIVACY ──────────────────────────────────────────────────────── -->
+  <section class="py-20">
+    <div class="shell">
+      <div class="max-w-3xl" data-reveal>
+        <p class="font-mono text-xs uppercase tracking-widest text-muted">Privacy</p>
+        <h2 class="mt-2 text-3xl font-bold text-accent md:text-4xl">
+          Your clipboard never touches a server. There isn't one.
+        </h2>
+        <p class="mt-3 text-lg text-muted">
+          Passwords, addresses and private messages pass through your clipboard.
+          They stay on your devices.
+        </p>
       </div>
-      <h2 class="relative mx-auto max-w-2xl text-4xl font-bold md:text-5xl">
-        Stop losing things you just copied.
-      </h2>
-      <p class="relative mx-auto mt-5 max-w-xl text-lg text-muted">
-        Free, local-first, and under 12 MB. Install it in the next minute and
-        never dig through your history by hand again.
-      </p>
-      <div class="relative mt-9 flex flex-wrap justify-center gap-3">
-        <a
-          href="/download"
-          class="inline-flex items-center gap-2 rounded-lg bg-accent px-6 py-3 text-sm font-semibold text-accent-ink transition-colors hover:bg-accent-strong"
-        >
-          <Icon name="download" size={18} stroke={2} />
-          Download Quakboard
-        </a>
-        <a
-          href="/privacy"
-          class="inline-flex items-center gap-2 rounded-lg border border-border px-6 py-3 text-sm font-medium text-text transition-colors hover:bg-surface-2"
-        >
-          <Icon name="shield" size={16} />
-          See our privacy promise
-        </a>
+
+      <div class="mt-12 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+        {
+          privacy.map((p, i) => (
+            <article class="flex flex-col justify-between rounded-xl bg-surface-2 p-6" data-reveal data-delay={i * 60}>
+              <div>
+                <span class="mb-4 grid h-10 w-10 place-items-center rounded-full bg-accent text-accent-ink">
+                  <Icon name={p.icon} size={20} />
+                </span>
+                <h3 class="mb-2 text-base font-semibold text-accent">{p.title}</h3>
+                <p class="text-sm text-muted">{p.body}</p>
+              </div>
+              <span class="mt-4 font-mono text-[11px] font-semibold text-accent">{p.tag}</span>
+            </article>
+          ))
+        }
+      </div>
+      <a href="/privacy" class="mt-8 inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline">
+        Read the privacy policy <Icon name="arrow-right" size={15} />
+      </a>
+    </div>
+  </section>
+
+  <!-- ── GET IT ───────────────────────────────────────────────────────── -->
+  <section class="bg-bg-alt py-20">
+    <div class="shell">
+      <div class="mx-auto mb-12 max-w-2xl text-center" data-reveal>
+        <p class="font-mono text-xs uppercase tracking-widest text-muted">Get Quakboard</p>
+        <h2 class="mt-2 text-3xl font-bold text-accent md:text-4xl">On every device you own.</h2>
+        <p class="mt-3 text-muted">The same sync works between any of them.</p>
+      </div>
+
+      <div class="grid gap-5 md:grid-cols-3">
+        <article class="flex flex-col justify-between rounded-xl bg-bg p-8 shadow-sm" data-reveal>
+          <div>
+            <div class="mb-4 flex items-center justify-between">
+              <Icon name="device" size={28} class="text-accent" />
+              <span class="rounded bg-surface px-2 py-0.5 font-mono text-[10px] font-semibold text-muted">Available</span>
+            </div>
+            <h3 class="text-xl font-semibold text-accent">Desktop</h3>
+            <p class="mt-2 text-sm text-muted">
+              macOS, Windows and Linux. Global hotkey, tray icon, launch at login,
+              and updates from inside the app.
+            </p>
+          </div>
+          <a
+            href="/download"
+            class="mt-8 flex items-center justify-center gap-1.5 rounded-lg bg-accent py-2.5 font-semibold text-accent-ink transition-colors hover:bg-accent-strong"
+          >
+            <Icon name="download" size={18} /> Download
+          </a>
+        </article>
+
+        <article class="flex flex-col justify-between rounded-xl bg-bg p-8 shadow-sm" data-reveal data-delay="60">
+          <div>
+            <div class="mb-4 flex items-center justify-between">
+              <Icon name="apple" size={28} class="text-accent" />
+              <span class="rounded bg-surface px-2 py-0.5 font-mono text-[10px] font-semibold text-muted">Coming soon</span>
+            </div>
+            <h3 class="text-xl font-semibold text-accent">iPhone & iPad</h3>
+            <p class="mt-2 text-sm text-muted">
+              Paste & Send, "Share to Quakboard" from any app, and files saved to
+              the Files app. Receives while the app is open.
+            </p>
+          </div>
+          <span class="mt-8 rounded-lg bg-surface py-2.5 text-center font-semibold text-muted">
+            App Store soon
+          </span>
+        </article>
+
+        <article class="flex flex-col justify-between rounded-xl bg-bg p-8 shadow-sm" data-reveal data-delay="120">
+          <div>
+            <div class="mb-4 flex items-center justify-between">
+              <Icon name="device" size={28} class="text-accent" />
+              <span class="rounded bg-surface px-2 py-0.5 font-mono text-[10px] font-semibold text-muted">Planned</span>
+            </div>
+            <h3 class="text-xl font-semibold text-accent">Android</h3>
+            <p class="mt-2 text-sm text-muted">
+              Next after iPhone, with the same sync. It can also keep receiving in
+              the background, if you turn that on.
+            </p>
+          </div>
+          <span class="mt-8 rounded-lg bg-surface py-2.5 text-center font-semibold text-muted">
+            In the works
+          </span>
+        </article>
       </div>
     </div>
   </section>
 </BaseLayout>
+
+<script define:vars={{ links }}>
+  // Point the main button at this visitor's installer. Without JS, or on a
+  // system we can't tell apart (Linux distros, phones), it opens /download.
+  const cta = document.getElementById("download-cta");
+  const label = document.getElementById("download-label");
+  const ua = navigator.userAgent;
+  // iPadOS reports itself as a Mac; touch tells them apart.
+  const isMac = /Macintosh/.test(ua) && navigator.maxTouchPoints < 2;
+  const isWindows = /Windows/.test(ua);
+
+  const point = (href, text) => {
+    cta.href = href;
+    label.textContent = text;
+  };
+
+  if (isMac) point(links.mac, "Download for macOS");
+  else if (isWindows) point(links.win, "Download for Windows");
+  else if (/Linux/.test(ua) && !/Android/.test(ua)) label.textContent = "Download for Linux";
+
+  // Only Chromium browsers report the CPU. Safari doesn't, and most Macs
+  // sold since 2020 are Apple Silicon, so that stays the default.
+  navigator.userAgentData
+    ?.getHighEntropyValues(["architecture"])
+    .then(({ architecture }) => {
+      if (isMac && architecture === "x86") point(links.macIntel, "Download for macOS (Intel)");
+      if (isWindows && architecture === "arm") point(links.winArm, "Download for Windows (ARM)");
+    })
+    .catch(() => {});
+</script>
