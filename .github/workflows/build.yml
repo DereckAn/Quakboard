@@ -399,31 +399,31 @@ jobs:
           }
 
           # macOS
-          copy_bundle "x86_64-apple-darwin" "*.dmg" "Quakboard-${VERSION}-macOS-Intel.dmg"
-          copy_bundle "x86_64-apple-darwin" "*.app.tar.gz" "Quakboard-${VERSION}-macOS-Intel.app.tar.gz"
-          copy_sig "x86_64-apple-darwin" "*.app.tar.gz.sig" "Quakboard-${VERSION}-macOS-Intel.app.tar.gz.sig"
+          copy_bundle "x86_64-apple-darwin" "*.dmg" "Quakboard-macOS-Intel.dmg"
+          copy_bundle "x86_64-apple-darwin" "*.app.tar.gz" "Quakboard-macOS-Intel.app.tar.gz"
+          copy_sig "x86_64-apple-darwin" "*.app.tar.gz.sig" "Quakboard-macOS-Intel.app.tar.gz.sig"
 
-          copy_bundle "aarch64-apple-darwin" "*.dmg" "Quakboard-${VERSION}-macOS-AppleSilicon.dmg"
-          copy_bundle "aarch64-apple-darwin" "*.app.tar.gz" "Quakboard-${VERSION}-macOS-AppleSilicon.app.tar.gz"
-          copy_sig "aarch64-apple-darwin" "*.app.tar.gz.sig" "Quakboard-${VERSION}-macOS-AppleSilicon.app.tar.gz.sig"
+          copy_bundle "aarch64-apple-darwin" "*.dmg" "Quakboard-macOS-AppleSilicon.dmg"
+          copy_bundle "aarch64-apple-darwin" "*.app.tar.gz" "Quakboard-macOS-AppleSilicon.app.tar.gz"
+          copy_sig "aarch64-apple-darwin" "*.app.tar.gz.sig" "Quakboard-macOS-AppleSilicon.app.tar.gz.sig"
 
           # Windows
-          copy_bundle "x86_64-pc-windows-msvc" "*x64_en-US.msi" "Quakboard-${VERSION}-Windows-x64.msi"
-          copy_bundle "x86_64-pc-windows-msvc" "*x64-setup.exe" "Quakboard-${VERSION}-Windows-x64-Setup.exe"
-          copy_sig "x86_64-pc-windows-msvc" "*x64-setup.exe.sig" "Quakboard-${VERSION}-Windows-x64-Setup.exe.sig"
+          copy_bundle "x86_64-pc-windows-msvc" "*x64_en-US.msi" "Quakboard-Windows-x64.msi"
+          copy_bundle "x86_64-pc-windows-msvc" "*x64-setup.exe" "Quakboard-Windows-x64-Setup.exe"
+          copy_sig "x86_64-pc-windows-msvc" "*x64-setup.exe.sig" "Quakboard-Windows-x64-Setup.exe.sig"
 
-          copy_bundle "aarch64-pc-windows-msvc" "*arm64_en-US.msi" "Quakboard-${VERSION}-Windows-arm64.msi"
-          copy_bundle "aarch64-pc-windows-msvc" "*arm64-setup.exe" "Quakboard-${VERSION}-Windows-arm64-Setup.exe"
-          copy_sig "aarch64-pc-windows-msvc" "*arm64-setup.exe.sig" "Quakboard-${VERSION}-Windows-arm64-Setup.exe.sig"
+          copy_bundle "aarch64-pc-windows-msvc" "*arm64_en-US.msi" "Quakboard-Windows-arm64.msi"
+          copy_bundle "aarch64-pc-windows-msvc" "*arm64-setup.exe" "Quakboard-Windows-arm64-Setup.exe"
+          copy_sig "aarch64-pc-windows-msvc" "*arm64-setup.exe.sig" "Quakboard-Windows-arm64-Setup.exe.sig"
 
           # Linux
-          copy_bundle "x86_64-unknown-linux-gnu" "*.AppImage" "Quakboard-${VERSION}-Linux-x64.AppImage"
-          copy_bundle "x86_64-unknown-linux-gnu" "*.deb" "Quakboard-${VERSION}-Linux-x64.deb"
-          copy_bundle "x86_64-unknown-linux-gnu" "*.rpm" "Quakboard-${VERSION}-Linux-x64.rpm"
+          copy_bundle "x86_64-unknown-linux-gnu" "*.AppImage" "Quakboard-Linux-x64.AppImage"
+          copy_bundle "x86_64-unknown-linux-gnu" "*.deb" "Quakboard-Linux-x64.deb"
+          copy_bundle "x86_64-unknown-linux-gnu" "*.rpm" "Quakboard-Linux-x64.rpm"
 
-          copy_bundle "aarch64-unknown-linux-gnu" "*.AppImage" "Quakboard-${VERSION}-Linux-arm64.AppImage"
-          copy_bundle "aarch64-unknown-linux-gnu" "*arm64.deb" "Quakboard-${VERSION}-Linux-arm64.deb"
-          copy_bundle "aarch64-unknown-linux-gnu" "*aarch64.rpm" "Quakboard-${VERSION}-Linux-arm64.rpm"
+          copy_bundle "aarch64-unknown-linux-gnu" "*.AppImage" "Quakboard-Linux-arm64.AppImage"
+          copy_bundle "aarch64-unknown-linux-gnu" "*arm64.deb" "Quakboard-Linux-arm64.deb"
+          copy_bundle "aarch64-unknown-linux-gnu" "*aarch64.rpm" "Quakboard-Linux-arm64.rpm"
 
           (cd release-assets && sha256sum * > SHA256SUMS 2>/dev/null || true)
 
@@ -446,10 +446,10 @@ jobs:
             fi
           }
 
-          MACOS_INTEL_SIG=$(read_sig "Quakboard-${VERSION}-macOS-Intel.app.tar.gz.sig")
-          MACOS_ARM_SIG=$(read_sig "Quakboard-${VERSION}-macOS-AppleSilicon.app.tar.gz.sig")
-          WINDOWS_X64_SIG=$(read_sig "Quakboard-${VERSION}-Windows-x64-Setup.exe.sig")
-          WINDOWS_ARM_SIG=$(read_sig "Quakboard-${VERSION}-Windows-arm64-Setup.exe.sig")
+          MACOS_INTEL_SIG=$(read_sig "Quakboard-macOS-Intel.app.tar.gz.sig")
+          MACOS_ARM_SIG=$(read_sig "Quakboard-macOS-AppleSilicon.app.tar.gz.sig")
+          WINDOWS_X64_SIG=$(read_sig "Quakboard-Windows-x64-Setup.exe.sig")
+          WINDOWS_ARM_SIG=$(read_sig "Quakboard-Windows-arm64-Setup.exe.sig")
 
           # Create latest.json (Linux updater not supported - AppImage doesn't have signature)
           cat > release-assets/latest.json << EOF
@@ -460,19 +460,19 @@ jobs:
             "platforms": {
               "darwin-x86_64": {
                 "signature": "${MACOS_INTEL_SIG}",
-                "url": "${BASE_URL}/Quakboard-${VERSION}-macOS-Intel.app.tar.gz"
+                "url": "${BASE_URL}/Quakboard-macOS-Intel.app.tar.gz"
               },
               "darwin-aarch64": {
                 "signature": "${MACOS_ARM_SIG}",
-                "url": "${BASE_URL}/Quakboard-${VERSION}-macOS-AppleSilicon.app.tar.gz"
+                "url": "${BASE_URL}/Quakboard-macOS-AppleSilicon.app.tar.gz"
               },
               "windows-x86_64": {
                 "signature": "${WINDOWS_X64_SIG}",
-                "url": "${BASE_URL}/Quakboard-${VERSION}-Windows-x64-Setup.exe"
+                "url": "${BASE_URL}/Quakboard-Windows-x64-Setup.exe"
               },
               "windows-aarch64": {
                 "signature": "${WINDOWS_ARM_SIG}",
-                "url": "${BASE_URL}/Quakboard-${VERSION}-Windows-arm64-Setup.exe"
+                "url": "${BASE_URL}/Quakboard-Windows-arm64-Setup.exe"
               }
             }
           }
@@ -492,12 +492,12 @@ jobs:
 
           | Platform | Architecture | Download |
           |----------|-------------|----------|
-          | Windows | x64 | [Setup.exe](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-Windows-x64-Setup.exe) / [.msi](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-Windows-x64.msi) |
-          | Windows | ARM64 | [Setup.exe](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-Windows-arm64-Setup.exe) / [.msi](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-Windows-arm64.msi) |
-          | macOS | Intel | [.dmg](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-macOS-Intel.dmg) |
-          | macOS | Apple Silicon | [.dmg](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-macOS-AppleSilicon.dmg) |
-          | Linux | x64 | [.AppImage](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-Linux-x64.AppImage) / [.deb](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-Linux-x64.deb) / [.rpm](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-Linux-x64.rpm) |
-          | Linux | ARM64 | [.AppImage](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-Linux-arm64.AppImage) / [.deb](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-Linux-arm64.deb) / [.rpm](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-${VERSION}-Linux-arm64.rpm) |
+          | Windows | x64 | [Setup.exe](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-Windows-x64-Setup.exe) / [.msi](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-Windows-x64.msi) |
+          | Windows | ARM64 | [Setup.exe](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-Windows-arm64-Setup.exe) / [.msi](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-Windows-arm64.msi) |
+          | macOS | Intel | [.dmg](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-macOS-Intel.dmg) |
+          | macOS | Apple Silicon | [.dmg](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-macOS-AppleSilicon.dmg) |
+          | Linux | x64 | [.AppImage](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-Linux-x64.AppImage) / [.deb](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-Linux-x64.deb) / [.rpm](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-Linux-x64.rpm) |
+          | Linux | ARM64 | [.AppImage](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-Linux-arm64.AppImage) / [.deb](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-Linux-arm64.deb) / [.rpm](https://github.com/${REPO}/releases/download/${TAG}/Quakboard-Linux-arm64.rpm) |
 
           ## 🔄 Auto-Update
 
