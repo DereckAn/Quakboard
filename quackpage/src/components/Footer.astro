@@ -1,4 +1,6 @@
 ---
+import { url } from "../url";
+import { ISSUES_URL, RELEASES_URL } from "../releases";
 
 const cols = [
   {
@@ -6,24 +8,21 @@ const cols = [
     links: [
       { href: "/", label: "Overview" },
       { href: "/download", label: "Download" },
-      { href: "/changelog", label: "Changelog" },
-    ],
-  },
-  {
-    title: "Docs",
-    links: [
-      { href: "/docs/getting-started", label: "Getting Started" },
-      { href: "/docs/keyboard-shortcuts", label: "Keyboard Shortcuts" },
       { href: "/sync", label: "How sync works" },
-      { href: "/docs/privacy", label: "Privacy & Data" },
+      { href: RELEASES_URL, label: "Release notes" },
     ],
   },
   {
-    title: "Company",
+    title: "Help",
     links: [
-      { href: "/privacy", label: "Privacy policy" },
       { href: "/support", label: "Support" },
+      { href: ISSUES_URL, label: "Report a problem" },
+      { href: "https://github.com/DereckAn/Quakboard", label: "Source code" },
     ],
+  },
+  {
+    title: "Legal",
+    links: [{ href: "/privacy", label: "Privacy policy" }],
   },
 ];
 ---
@@ -32,8 +31,8 @@ const cols = [
   <div class="shell py-14">
     <div class="grid gap-12 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
       <div>
-        <a href="/" class="flex items-center gap-2.5">
-          <img src="/logo.png" alt="" width="40" height="40" class="h-10 w-10" />
+        <a href={url("/")} class="flex items-center gap-2.5">
+          <img src={url("/logo.png")} alt="" width="40" height="40" class="h-10 w-10" />
           <span class="font-heading text-lg font-semibold">Quakboard</span>
         </a>
         <p class="mt-4 max-w-xs text-sm leading-relaxed text-muted">
@@ -52,7 +51,7 @@ const cols = [
               {col.links.map((l) => (
                 <li>
                   <a
-                    href={l.href}
+                    href={l.href.startsWith("/") ? url(l.href) : l.href}
                     class="text-muted transition-colors hover:text-text"
                   >
                     {l.label}

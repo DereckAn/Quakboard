@@ -1,4 +1,5 @@
 ---
+import { url } from "../url";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Icon from "../components/Icon.astro";
 
@@ -229,7 +230,7 @@ sudo ufw allow from 192.168.1.0/24 to any port 5353 proto udp</pre>
           ))
         }
       </dl>
-      <a href="/download" class="mt-10 inline-flex items-center gap-2 rounded-lg bg-accent px-6 py-3 font-semibold text-accent-ink shadow-md transition-colors hover:bg-accent-strong" data-reveal>
+      <a href={url("/download")} class="mt-10 inline-flex items-center gap-2 rounded-lg bg-accent px-6 py-3 font-semibold text-accent-ink shadow-md transition-colors hover:bg-accent-strong" data-reveal>
         <Icon name="download" size={18} stroke={2} /> Download Quakboard
       </a>
     </div>

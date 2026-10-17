@@ -1,4 +1,5 @@
 ---
+import { url } from "../url";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import AppWindow from "../components/AppWindow.astro";
 import Icon from "../components/Icon.astro";
@@ -71,9 +72,10 @@ const desktopFiles = {
   win: "Quakboard-Windows-x64-Setup.exe",
   winArm: "Quakboard-Windows-arm64-Setup.exe",
 };
-const links = Object.fromEntries(
-  Object.entries(desktopFiles).map(([k, f]) => [k, download(f)]),
-);
+const links = {
+  ...Object.fromEntries(Object.entries(desktopFiles).map(([k, f]) => [k, download(f)])),
+  linux: url("/download#linux"),
+};
 ---
 
 <BaseLayout title="Quakboard: your clipboard, on all your devices">
@@ -105,21 +107,21 @@ const links = Object.fromEntries(
         <div class="mt-8 flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
           <a
             id="download-cta"
-            href="/download"
+            href={url("/download")}
             class="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-6 py-3 font-semibold text-accent-ink shadow-md transition-colors hover:bg-accent-strong sm:w-auto"
           >
             <Icon name="download" size={19} stroke={2} />
             <span id="download-label">Download Quakboard</span>
           </a>
           <a
-            href="/sync"
+            href={url("/sync")}
             class="flex w-full items-center justify-center gap-2 rounded-lg bg-surface px-6 py-3 font-semibold text-accent shadow-sm transition-colors hover:bg-surface-2 sm:w-auto"
           >
             <Icon name="sync" size={19} />
             How sync works
           </a>
         </div>
-        <a href="/download" class="mt-4 text-sm text-muted underline-offset-4 hover:text-text hover:underline">
+        <a href={url("/download")} class="mt-4 text-sm text-muted underline-offset-4 hover:text-text hover:underline">
           All systems and versions
         </a>
 
@@ -229,7 +231,7 @@ const links = Object.fromEntries(
           ))
         }
       </div>
-      <a href="/privacy" class="mt-8 inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline">
+      <a href={url("/privacy")} class="mt-8 inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline">
         Read the privacy policy <Icon name="arrow-right" size={15} />
       </a>
     </div>
@@ -258,7 +260,7 @@ const links = Object.fromEntries(
             </p>
           </div>
           <a
-            href="/download"
+            href={url("/download")}
             class="mt-8 flex items-center justify-center gap-1.5 rounded-lg bg-accent py-2.5 font-semibold text-accent-ink transition-colors hover:bg-accent-strong"
           >
             <Icon name="download" size={18} /> Download
@@ -320,7 +322,7 @@ const links = Object.fromEntries(
 
   if (isMac) point(links.mac, "Download for macOS");
   else if (isWindows) point(links.win, "Download for Windows");
-  else if (/Linux/.test(ua) && !/Android/.test(ua)) point("/download#linux", "Download for Linux");
+  else if (/Linux/.test(ua) && !/Android/.test(ua)) point(links.linux, "Download for Linux");
 
   // Only Chromium browsers report the CPU. Safari doesn't, and most Macs
   // sold since 2020 are Apple Silicon, so that stays the default.

@@ -1,0 +1,55 @@
+name: Website
+
+# Builds quackpage/ and publishes it to https://dereckan.github.io/Quakboard/
+on:
+  push:
+    branches: [app]
+    paths:
+      - "quackpage/**"
+      - ".github/workflows/website.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# one deploy at a time; a newer push waits instead of cancelling a running deploy
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: quackpage
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Astro runs on Node and needs 22.12 or newer
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: quackpage/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

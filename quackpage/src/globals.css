@@ -4,13 +4,13 @@
    Google Fonts. Both are under the SIL Open Font License. */
 @font-face {
   font-family: "Manrope";
-  src: url("/fonts/manrope.woff2") format("woff2");
+  src: url("./fonts/manrope.woff2") format("woff2");
   font-weight: 200 800;
   font-display: swap;
 }
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("/fonts/jetbrains-mono.woff2") format("woff2");
+  src: url("./fonts/jetbrains-mono.woff2") format("woff2");
   font-weight: 100 800;
   font-display: swap;
 }
@@ -116,7 +116,6 @@ h4 {
   }
 }
 
-/* subtle amber selection bar on the left of focused docs links etc. */
 .shell {
   width: 100%;
   max-width: var(--spacing-shell);
@@ -125,7 +124,7 @@ h4 {
 }
 
 /* ----------------------------------------------------------------------------
-   MOTION — soft fade/slide on scroll, gentle hover lift.
+   MOTION — soft fade/slide on scroll.
    Elements with [data-reveal] start hidden and animate in via IntersectionObserver.
    ---------------------------------------------------------------------------- */
 [data-reveal] {
@@ -142,18 +141,6 @@ h4 {
   transform: none;
 }
 
-.lift {
-  transition:
-    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 0.25s ease,
-    background-color 0.25s ease;
-}
-
-.lift:hover {
-  transform: translateY(-4px);
-  border-color: color-mix(in oklab, var(--color-accent) 40%, var(--color-border));
-}
-
 /* respect reduced motion — kill transforms + reveal animation */
 @media (prefers-reduced-motion: reduce) {
   html {
@@ -163,9 +150,6 @@ h4 {
     opacity: 1;
     transform: none;
     transition: none;
-  }
-  .lift:hover {
-    transform: none;
   }
   * {
     animation-duration: 0.001ms !important;

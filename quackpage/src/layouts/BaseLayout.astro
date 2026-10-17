@@ -1,5 +1,7 @@
 ---
+import { url } from "../url";
 import "../globals.css";
+import manrope from "../fonts/manrope.woff2?url";
 import Nav from "../components/Nav.astro";
 import Footer from "../components/Footer.astro";
 
@@ -10,7 +12,7 @@ interface Props {
 
 const {
   title,
-  description = "Quakboard is a local-first clipboard manager: full clipboard history, instant search, pinned snippets, and optional end-to-end encrypted sync.",
+  description = "Quakboard is a private clipboard manager that syncs between your own devices over your local network. No cloud, no account.",
 } = Astro.props;
 ---
 
@@ -18,15 +20,15 @@ const {
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" href={url("/favicon.ico")} sizes="any" />
+    <link rel="apple-touch-icon" href={url("/apple-touch-icon.png")} />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="generator" content={Astro.generator} />
     <meta name="description" content={description} />
     <meta name="color-scheme" content="light dark" />
 
     <!-- Fonts are served from this site, so visitors' browsers never contact Google -->
-    <link rel="preload" href="/fonts/manrope.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href={manrope} as="font" type="font/woff2" crossorigin />
 
     <title>{title}</title>
   </head>

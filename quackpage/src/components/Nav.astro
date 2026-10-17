@@ -1,26 +1,27 @@
 ---
+import { url } from "../url";
 import Icon from "./Icon.astro";
 
 const links = [
   { href: "/", label: "Home" },
   { href: "/download", label: "Download" },
-  { href: "/docs/getting-started", label: "Docs", match: "/docs" },
-  { href: "/changelog", label: "Changelog" },
+  { href: "/sync", label: "How sync works" },
+  { href: "/support", label: "Support" },
   { href: "/privacy", label: "Privacy" },
 ];
 
-// built pages end in "/" (/download/), so drop it before comparing
-const path = Astro.url.pathname.replace(/(.)\/$/, "$1");
-const isActive = (l: { href: string; match?: string }) =>
-  l.match ? path.startsWith(l.match) : path === l.href;
+// drop the base path, and the "/" built pages end in (/Quakboard/download/)
+const path =
+  Astro.url.pathname.slice(url("").length).replace(/(.)\/$/, "$1") || "/";
+const isActive = (l: { href: string }) => path === l.href;
 ---
 
 <header
   class="sticky top-0 z-50 border-b border-border-soft bg-bg/80 backdrop-blur-sm"
 >
   <nav class="shell flex h-16 items-center justify-between gap-6">
-    <a href="/" class="flex items-center gap-2.5" aria-label="Quakboard home">
-      <img src="/logo.png" alt="" width="40" height="40" class="h-10 w-10" />
+    <a href={url("/")} class="flex items-center gap-2.5" aria-label="Quakboard home">
+      <img src={url("/logo.png")} alt="" width="40" height="40" class="h-10 w-10" />
       <span class="font-heading text-lg font-semibold tracking-tight"
         >Quakboard</span
       >
@@ -31,7 +32,7 @@ const isActive = (l: { href: string; match?: string }) =>
         links.map((l) => (
           <li>
             <a
-              href={l.href}
+              href={url(l.href)}
               aria-current={isActive(l) ? "page" : undefined}
               class={`relative rounded-md px-3 py-2 text-sm transition-colors hover:text-text ${
                 isActive(l) ? "text-text" : "text-muted"
@@ -49,7 +50,7 @@ const isActive = (l: { href: string; match?: string }) =>
 
     <div class="flex items-center gap-3">
       <a
-        href="/download"
+        href={url("/download")}
         class="inline-flex items-center gap-2 rounded-md bg-accent px-3.5 py-2 text-sm font-medium text-accent-ink transition-colors hover:bg-accent-strong"
       >
         <Icon name="download" size={16} stroke={2} />
@@ -65,7 +66,7 @@ const isActive = (l: { href: string; match?: string }) =>
         links.map((l) => (
           <li>
             <a
-              href={l.href}
+              href={url(l.href)}
               aria-current={isActive(l) ? "page" : undefined}
               class={`whitespace-nowrap rounded-md px-3 py-1.5 transition-colors ${
                 isActive(l) ? "bg-surface text-text" : "text-muted"
