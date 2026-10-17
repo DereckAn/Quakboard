@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/* Latin subsets of the variable fonts (every weight in one file), from
+   Google Fonts. Both are under the SIL Open Font License. */
+@font-face {
+  font-family: "Manrope";
+  src: url("/fonts/manrope.woff2") format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
 /* ============================================================================
    QUAKBOARD — DESIGN TOKENS
    The apps' palette (ios/Quakboard/Quakboard/Theme.swift), so the site,

@@ -1,232 +1,170 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Icon from "../components/Icon.astro";
+import { ISSUES_URL } from "../releases";
+
+const UPDATED = "October 17, 2026";
 
 const promises = [
-  {
-    icon: "device",
-    title: "Local by default",
-    body: "Out of the box, your entire clipboard history stays in one database on your machine. Nothing is uploaded, because there's nowhere to upload it to until you say so.",
-  },
-  {
-    icon: "lock",
-    title: "Encrypted before it leaves",
-    body: "Turn on sync and every item is encrypted on your device first. Our relay only ever holds ciphertext — we couldn't read your clipboard if we tried.",
-  },
-  {
-    icon: "eye",
-    title: "No telemetry, ever",
-    body: "No analytics, no tracking, no usage pings, no crash reports with your data in them. The app works fully offline and stays that way unless you enable sync.",
-  },
-];
-
-// Plain-language: local vs synced.
-const local = [
-  "Full clipboard history (text, code, links, colors)",
-  "Copied images and files",
-  "Pinned snippets and their names",
-  "Your settings and shortcuts",
-  "Search index for instant lookup",
-];
-
-const synced = [
-  "Only what you choose: history and snippets",
-  "Each item encrypted on-device first",
-  "Images & files only if you opt in",
-  "Stored as ciphertext we can't decrypt",
-  "Anything marked local-only stays put",
-];
-
-const neverLeaves = [
-  "Items copied while capture is paused",
-  "Passwords from password managers (auto-skipped)",
-  "Content matching your exclusion rules",
-  "Your sync passphrase — we never receive it",
+  { icon: "lock", title: "No data collected", body: "We don't receive your clipboard, your files or anything about how you use Quakboard." },
+  { icon: "eye", title: "No tracking", body: "No analytics, no ads, no crash reports sent anywhere." },
+  { icon: "device", title: "No account", body: "Nothing to sign up for. There's no server holding your data." },
 ];
 ---
 
-<BaseLayout title="Privacy — Quakboard">
-  <!-- hero -->
-  <section class="shell relative pt-20 pb-16 md:pt-28">
-    <div
-      aria-hidden="true"
-      class="pointer-events-none absolute -top-20 right-10 h-[360px] w-[360px] rounded-full bg-accent/10 blur-[120px]"
-    >
-    </div>
-    <div class="max-w-3xl" data-reveal>
-      <span
-        class="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs text-muted"
-      >
-        <Icon name="shield" size={14} class="text-accent" />
-        Our privacy promise
-      </span>
-      <h1 class="mt-7 text-5xl font-bold md:text-6xl">
-        Your clipboard is<br /><span class="text-accent">nobody's business but yours.</span>
-      </h1>
-      <p class="mt-7 text-lg leading-relaxed text-muted">
-        A clipboard manager sees the most sensitive things you touch all day —
-        passwords mid-paste, private messages, account numbers. We designed
-        Quakboard so that handling all of it never means handing it over. Here's
-        exactly what happens to your data, in plain language.
+<BaseLayout
+  title="Privacy policy · Quakboard"
+  description="Quakboard's privacy policy: no data collected, no account, and sync only over your local network."
+>
+  <section class="shell pt-14 pb-12 text-center md:pt-20">
+    <div class="mx-auto max-w-2xl" data-reveal>
+      <p class="font-mono text-xs uppercase tracking-widest text-muted">Privacy policy</p>
+      <h1 class="mt-2 text-4xl font-bold text-accent md:text-5xl">Your clipboard stays yours</h1>
+      <p class="mt-4 text-lg text-muted">
+        This policy covers the Quakboard apps for macOS, Windows, Linux, iPhone
+        and iPad, and this website.
       </p>
+      <p class="mt-2 text-sm text-faint">Last updated {UPDATED}</p>
     </div>
-  </section>
 
-  <!-- three promises -->
-  <section class="shell">
-    <div class="grid gap-px overflow-hidden rounded-xl border border-border bg-border md:grid-cols-3">
+    <div class="mt-10 grid gap-5 text-left md:grid-cols-3">
       {
         promises.map((p, i) => (
-          <article class="bg-surface p-7" data-reveal data-delay={i * 80}>
-            <span class="grid h-10 w-10 place-items-center rounded-lg border border-accent/30 bg-accent/10 text-accent">
+          <article class="rounded-xl bg-surface p-6 shadow-sm" data-reveal data-delay={i * 60}>
+            <span class="grid h-10 w-10 place-items-center rounded-full bg-accent text-accent-ink">
               <Icon name={p.icon} size={20} />
             </span>
-            <h2 class="mt-5 text-lg font-semibold">{p.title}</h2>
-            <p class="mt-2.5 text-sm leading-relaxed text-muted">{p.body}</p>
+            <h2 class="mt-4 font-semibold text-accent">{p.title}</h2>
+            <p class="mt-1.5 text-sm text-muted">{p.body}</p>
           </article>
         ))
       }
     </div>
   </section>
 
-  <!-- local vs synced -->
-  <section class="shell pt-24">
-    <div class="max-w-2xl" data-reveal>
-      <p class="font-mono text-xs uppercase tracking-widest text-accent">
-        Stored locally vs. synced
-      </p>
-      <h2 class="mt-4 text-3xl font-bold md:text-4xl">
-        Two clear states. You're always in one you chose.
-      </h2>
-      <p class="mt-4 text-muted">
-        Sync is a deliberate switch, not a default. Until you flip it, the right
-        column simply doesn't exist for your data.
-      </p>
-    </div>
+  <article class="policy shell max-w-3xl pb-8">
+    <h2>What's stored, and where</h2>
+    <p>
+      Quakboard keeps your clipboard history, settings and paired devices on
+      your own device. Nothing is copied to us or to any cloud service.
+    </p>
+    <ul>
+      <li><strong>macOS:</strong> <code>~/Library/Application Support/com.dereckan.quakboard/</code></li>
+      <li><strong>Windows:</strong> <code>%APPDATA%\com.dereckan.quakboard\</code></li>
+      <li><strong>Linux:</strong> <code>~/.local/share/com.dereckan.quakboard/</code></li>
+      <li><strong>iPhone and iPad:</strong> inside the app, removed when you delete it. Files you fetch are in the Files app under On My iPhone → Quakboard.</li>
+    </ul>
+    <p>
+      You can delete any item from the app, and on a computer choose how much
+      history is kept. Deleting the folder above removes everything.
+    </p>
 
-    <div class="mt-12 grid gap-6 lg:grid-cols-2">
-      <!-- local -->
-      <div class="rounded-xl border border-border bg-surface p-7" data-reveal>
-        <div class="flex items-center gap-3 border-b border-border-soft pb-5">
-          <span class="grid h-10 w-10 place-items-center rounded-lg border border-border bg-bg text-text">
-            <Icon name="device" size={20} />
-          </span>
-          <div>
-            <h3 class="font-semibold">On your device</h3>
-            <p class="text-xs text-faint">Always. Sync on or off.</p>
-          </div>
-        </div>
-        <ul class="mt-5 space-y-3">
-          {
-            local.map((item) => (
-              <li class="flex items-start gap-3 text-sm text-muted">
-                <Icon name="check" size={16} class="mt-0.5 shrink-0 text-accent" />
-                {item}
-              </li>
-            ))
-          }
-        </ul>
-      </div>
+    <h2>Copying passwords and private text</h2>
+    <p>
+      Quakboard saves what you copy, which can include passwords and private
+      messages. That history never leaves your devices except to the devices
+      you pair. You can delete any item at any time.
+    </p>
 
-      <!-- synced -->
-      <div class="rounded-xl border border-accent/30 bg-surface p-7" data-reveal data-delay="80">
-        <div class="flex items-center gap-3 border-b border-border-soft pb-5">
-          <span class="grid h-10 w-10 place-items-center rounded-lg border border-accent/30 bg-accent/10 text-accent">
-            <Icon name="sync" size={20} />
-          </span>
-          <div>
-            <h3 class="font-semibold">Synced — only if you opt in</h3>
-            <p class="text-xs text-faint">Encrypted end-to-end.</p>
-          </div>
-        </div>
-        <ul class="mt-5 space-y-3">
-          {
-            synced.map((item) => (
-              <li class="flex items-start gap-3 text-sm text-muted">
-                <Icon name="lock" size={16} class="mt-0.5 shrink-0 text-accent" />
-                {item}
-              </li>
-            ))
-          }
-        </ul>
-      </div>
-    </div>
-  </section>
+    <h2>Sync between your devices</h2>
+    <p>
+      Sync is off until you turn it on. Devices talk directly over your local
+      network, never through the internet or a server. Only devices you pair
+      with a code can send or receive, and everything is encrypted end to end.
+      A device's name is shared only with the devices it pairs with.
+      <a href="/sync">How sync works</a> has the details.
+    </p>
 
-  <!-- never leaves -->
-  <section class="shell pt-20">
-    <div
-      class="rounded-xl border border-border bg-surface p-8 md:p-10"
-      data-reveal
-    >
-      <div class="flex items-center gap-3">
-        <Icon name="shield" size={22} class="text-accent" />
-        <h2 class="text-2xl font-bold">What never leaves your device — period</h2>
-      </div>
-      <p class="mt-3 max-w-2xl text-muted">
-        Some things shouldn't be remembered at all. These are excluded from
-        history and sync no matter your settings.
-      </p>
-      <ul class="mt-7 grid gap-3 sm:grid-cols-2">
-        {
-          neverLeaves.map((item) => (
-            <li class="flex items-start gap-3 rounded-lg border border-border-soft bg-bg px-4 py-3 text-sm text-muted">
-              <Icon name="lock" size={16} class="mt-0.5 shrink-0 text-accent" />
-              {item}
-            </li>
-          ))
-        }
-      </ul>
-    </div>
-  </section>
+    <h2>Clipboard access on iPhone and iPad</h2>
+    <p>
+      iOS doesn't let apps read the clipboard in the background, and Quakboard
+      doesn't try to. It reads the clipboard only when you tap Paste, when you
+      share to Quakboard from another app, or when Quakboard opens if you turned
+      on "Send new copies when Quakboard opens". iOS asks for the Local Network
+      permission so devices can find each other; it's used for nothing else.
+    </p>
 
-  <!-- you're in control -->
-  <section class="shell pt-20">
-    <div class="grid gap-8 md:grid-cols-[1fr_1.1fr] md:items-center">
-      <div data-reveal>
-        <h2 class="text-3xl font-bold md:text-4xl">And you can prove it.</h2>
-        <p class="mt-4 text-muted">
-          We don't ask you to take our word for it. Quakboard is auditable:
-          the database is plain SQLite you can open yourself, the sync relay is
-          open source, and there's no account standing between you and your data.
-        </p>
-        <div class="mt-7 flex flex-wrap gap-3">
-          <a
-            href="/docs/privacy"
-            class="inline-flex items-center gap-2 rounded-lg border border-border px-5 py-2.5 text-sm font-medium text-text transition-colors hover:bg-surface"
-          >
-            Technical data reference
-            <Icon name="arrow-right" size={16} />
-          </a>
-          <a
-            href="/docs/sync"
-            class="inline-flex items-center gap-2 rounded-lg border border-border px-5 py-2.5 text-sm font-medium text-text transition-colors hover:bg-surface"
-          >
-            How sync encryption works
-          </a>
-        </div>
-      </div>
+    <h2>When the apps use the internet</h2>
+    <p>The iPhone and iPad app doesn't use the internet. The desktop app does, only for these:</p>
+    <ul>
+      <li>
+        <strong>Link previews.</strong> When you copy a link, Quakboard loads
+        that page to show its title. The website sees a normal visit from your
+        IP address.
+      </li>
+      <li>
+        <strong>Link icons.</strong> Icons for copied links come from Google's
+        favicon service, so Google receives the link's domain (not the full
+        address) and your IP address.
+      </li>
+      <li>
+        <strong>Update checks.</strong> Quakboard asks GitHub whether a new
+        version exists, and downloads it from GitHub if you choose to update.
+      </li>
+      <li>
+        <strong>Lab features.</strong> If you turn on screen capture in Lab, its
+        helper is downloaded once from GitHub.
+      </li>
+    </ul>
+    <p>None of these requests include your clipboard history.</p>
 
-      <ul class="space-y-px overflow-hidden rounded-xl border border-border bg-border" data-reveal data-delay="80">
-        {
-          [
-            ["No account required", "Use the whole app without ever signing up."],
-            ["Delete means delete", "Erase history locally and on every synced device at once."],
-            ["Open & inspectable", "Read your own database; review the sync code on GitHub."],
-            ["Offline-capable", "Pull the network cable — Quakboard keeps working."],
-          ].map(([t, d]) => (
-            <li class="bg-surface px-6 py-5">
-              <div class="flex items-start gap-3">
-                <Icon name="check" size={18} class="mt-0.5 shrink-0 text-accent" />
-                <div>
-                  <p class="font-medium text-text">{t}</p>
-                  <p class="mt-0.5 text-sm text-muted">{d}</p>
-                </div>
-              </div>
-            </li>
-          ))
-        }
-      </ul>
-    </div>
-  </section>
+    <h2>This website</h2>
+    <p>
+      This site has no cookies, no analytics and no tracking, and everything it
+      shows is served from the site itself. The one exception: the Download
+      page asks GitHub for the latest version number, so GitHub sees your IP
+      address. The host that serves the site keeps standard server logs.
+    </p>
+
+    <h2>Children</h2>
+    <p>Quakboard doesn't collect personal information from anyone, including children.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>
+      If what the apps do with your data changes, this page changes with it,
+      and the date at the top is updated.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+      Questions about privacy? Open an issue on
+      <a href={ISSUES_URL}>GitHub</a>, or see <a href="/support">Support</a>.
+    </p>
+  </article>
 </BaseLayout>
+
+<style>
+  .policy h2 {
+    margin-top: 2.5rem;
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: var(--color-accent);
+  }
+  .policy p,
+  .policy ul {
+    margin-top: 0.75rem;
+    color: var(--color-muted);
+  }
+  .policy ul {
+    list-style: disc;
+    padding-left: 1.25rem;
+  }
+  .policy li {
+    margin-top: 0.5rem;
+  }
+  .policy strong {
+    color: var(--color-text);
+  }
+  .policy a {
+    font-weight: 600;
+    color: var(--color-accent);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .policy code {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: var(--color-text);
+    overflow-wrap: anywhere;
+  }
+</style>
