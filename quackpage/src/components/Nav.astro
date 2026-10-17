@@ -9,7 +9,8 @@ const links = [
   { href: "/privacy", label: "Privacy" },
 ];
 
-const path = Astro.url.pathname;
+// built pages end in "/" (/download/), so drop it before comparing
+const path = Astro.url.pathname.replace(/(.)\/$/, "$1");
 const isActive = (l: { href: string; match?: string }) =>
   l.match ? path.startsWith(l.match) : path === l.href;
 ---
@@ -32,13 +33,13 @@ const isActive = (l: { href: string; match?: string }) =>
             <a
               href={l.href}
               aria-current={isActive(l) ? "page" : undefined}
-              class={`rounded-md px-3 py-2 text-sm transition-colors hover:text-text ${
+              class={`relative rounded-md px-3 py-2 text-sm transition-colors hover:text-text ${
                 isActive(l) ? "text-text" : "text-muted"
               }`}
             >
               {l.label}
               {isActive(l) && (
-                <span class="mx-auto mt-1 block h-px w-4 bg-accent" />
+                <span class="absolute inset-x-0 bottom-0.5 mx-auto h-px w-4 bg-accent" />
               )}
             </a>
           </li>

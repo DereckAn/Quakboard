@@ -1,0 +1,237 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Icon from "../components/Icon.astro";
+
+const steps = [
+  {
+    n: "01",
+    title: "Turn on sync",
+    body: "On a computer: Settings → Account → Devices. On iPhone and iPad: the Settings tab. Sync is off until you turn it on.",
+  },
+  {
+    n: "02",
+    title: "Pair once with a code",
+    body: "Your devices find each other on the network. Choose Pair on one, then type the 6-digit code the other one shows.",
+  },
+  {
+    n: "03",
+    title: "Copy as usual",
+    body: "From then on, what you copy on one device shows up on the others. Pairing is remembered; you don't repeat it.",
+  },
+];
+
+const kinds = [
+  {
+    icon: "clipboard",
+    title: "Text",
+    body: "Text, code, links and colors are sent as soon as you copy them, and land on the other device's clipboard, ready to paste.",
+    tag: "Automatic",
+  },
+  {
+    icon: "eye",
+    title: "Images",
+    body: "Screenshots and copied images are sent too, up to 20 MB each. Turn off “Also sync images” to send only text.",
+    tag: "Automatic, optional",
+  },
+  {
+    icon: "download",
+    title: "Files",
+    body: "Files are offered, not pushed. The other device lists the file, and it downloads only when you choose Fetch. Its hash is checked when it arrives.",
+    tag: "On request",
+  },
+];
+
+const security = [
+  {
+    icon: "lock",
+    title: "The code never crosses the network",
+    body: "Pairing uses SPAKE2: both devices prove they know the same code without sending it. Someone listening learns nothing, and a guess has a one-in-a-million chance, with a new code every time.",
+  },
+  {
+    icon: "shield",
+    title: "Everything after pairing is encrypted",
+    body: "Each pair of devices shares its own key. Every clip, image and file chunk is encrypted with ChaCha20-Poly1305, so it can't be read, and any change to it is detected.",
+  },
+  {
+    icon: "device",
+    title: "Only your devices are heard",
+    body: "Anything from a device you haven't paired is dropped. Pairing requests are only accepted while the Devices screen is open, so nobody can spam you with codes.",
+  },
+  {
+    icon: "eye",
+    title: "Your name isn't broadcast",
+    body: "To be found, a device announces only a random id. Its name is shared with the other device during pairing, encrypted.",
+  },
+];
+
+const goodToKnow = [
+  {
+    title: "Devices must be on",
+    body: "A device that's asleep or off when you copy misses that clip. Nothing is queued for later.",
+  },
+  {
+    title: "iPhone and iPad receive while open",
+    body: "iOS stops apps in the background, so the phone receives while Quakboard is open and for about 25 seconds after you switch away.",
+  },
+  {
+    title: "Keep Quakboard up to date",
+    body: "Devices check each other's version. If one is too old, it shows “Update Quakboard” instead of failing quietly.",
+  },
+];
+---
+
+<BaseLayout
+  title="How sync works · Quakboard"
+  description="How Quakboard syncs your clipboard between your own devices: pairing with a code, end-to-end encryption, and nothing leaving your local network."
+>
+  <section class="shell pt-14 pb-16 text-center md:pt-20">
+    <div class="mx-auto max-w-3xl" data-reveal>
+      <p class="font-mono text-xs uppercase tracking-widest text-muted">How sync works</p>
+      <h1 class="mt-2 text-4xl font-bold text-accent md:text-5xl md:leading-[1.15]">
+        Your devices talk to each other. Nothing else is involved.
+      </h1>
+      <p class="mx-auto mt-5 max-w-2xl text-lg text-muted">
+        Quakboard syncs directly between devices on the same network. There's
+        no server in the middle, no account, and nothing goes to the internet.
+      </p>
+    </div>
+
+    <ol class="mt-12 grid gap-5 text-left md:grid-cols-3">
+      {
+        steps.map((s, i) => (
+          <li class="rounded-xl bg-surface p-6 shadow-sm" data-reveal data-delay={i * 60}>
+            <span class="font-mono text-sm font-semibold text-faint">{s.n}</span>
+            <h2 class="mt-2 text-lg font-semibold text-accent">{s.title}</h2>
+            <p class="mt-2 text-sm text-muted">{s.body}</p>
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+
+  <!-- ── WHAT MOVES ───────────────────────────────────────────────────── -->
+  <section class="bg-bg-alt py-20">
+    <div class="shell">
+      <div class="max-w-2xl" data-reveal>
+        <p class="font-mono text-xs uppercase tracking-widest text-muted">What syncs</p>
+        <h2 class="mt-2 text-3xl font-bold text-accent md:text-4xl">Small things go right away. Big things wait for you.</h2>
+      </div>
+      <div class="mt-10 grid gap-5 md:grid-cols-3">
+        {
+          kinds.map((k, i) => (
+            <article class="flex flex-col justify-between rounded-xl bg-surface p-6 shadow-sm" data-reveal data-delay={i * 60}>
+              <div>
+                <span class="mb-5 grid h-10 w-10 place-items-center rounded-lg bg-accent text-accent-ink">
+                  <Icon name={k.icon} size={20} />
+                </span>
+                <h3 class="mb-2 font-semibold text-accent">{k.title}</h3>
+                <p class="text-sm text-muted">{k.body}</p>
+              </div>
+              <span class="mt-5 font-mono text-[11px] font-semibold text-accent">{k.tag}</span>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ── SECURITY ─────────────────────────────────────────────────────── -->
+  <section class="py-20">
+    <div class="shell">
+      <div class="max-w-2xl" data-reveal>
+        <p class="font-mono text-xs uppercase tracking-widest text-muted">Security</p>
+        <h2 class="mt-2 text-3xl font-bold text-accent md:text-4xl">Private on any network, even one you don't trust.</h2>
+        <p class="mt-3 text-muted">
+          Your clipboard can hold passwords and private messages, so sync is built
+          to assume someone else is on the same Wi-Fi.
+        </p>
+      </div>
+      <div class="mt-10 grid gap-5 md:grid-cols-2">
+        {
+          security.map((s, i) => (
+            <article class="flex gap-4 rounded-xl bg-surface-2 p-6" data-reveal data-delay={(i % 2) * 60}>
+              <span class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent text-accent-ink">
+                <Icon name={s.icon} size={20} />
+              </span>
+              <div>
+                <h3 class="font-semibold text-accent">{s.title}</h3>
+                <p class="mt-1.5 text-sm text-muted">{s.body}</p>
+              </div>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ── NETWORK ──────────────────────────────────────────────────────── -->
+  <section id="network" class="scroll-mt-24 bg-bg-alt py-20">
+    <div class="shell">
+      <div class="max-w-2xl" data-reveal>
+        <p class="font-mono text-xs uppercase tracking-widest text-muted">Your network</p>
+        <h2 class="mt-2 text-3xl font-bold text-accent md:text-4xl">If your devices don't find each other</h2>
+        <p class="mt-3 text-muted">
+          Sync needs both devices on the same Wi-Fi or wired network. Most home
+          networks just work. Some networks need one of these.
+        </p>
+      </div>
+
+      <div class="mt-10 grid gap-5 lg:grid-cols-3">
+        <article class="rounded-xl bg-surface p-6 shadow-sm" data-reveal>
+          <Icon name="globe" size={22} class="text-accent" />
+          <h3 class="mt-3 font-semibold text-accent">Connect by IP</h3>
+          <p class="mt-2 text-sm text-muted">
+            Some networks block the announcements devices use to find each
+            other. Under Devices, each device shows its IP address. Type it into{" "}
+            <span class="font-semibold text-text">Connect by IP</span> on the
+            other device, for example <code class="font-mono text-xs text-text">192.168.1.20</code>,
+            and pair as usual.
+          </p>
+        </article>
+
+        <article class="rounded-xl bg-surface p-6 shadow-sm" data-reveal data-delay="60">
+          <Icon name="shield" size={22} class="text-accent" />
+          <h3 class="mt-3 font-semibold text-accent">Allow it through the firewall</h3>
+          <p class="mt-2 text-sm text-muted">
+            Quakboard listens on TCP port <code class="font-mono text-xs text-text">47823</code> and
+            finds devices over mDNS, UDP port <code class="font-mono text-xs text-text">5353</code>.
+            macOS and Windows ask once; choose Allow. On Linux with ufw, allow your
+            local network, for example:
+          </p>
+          <pre class="mt-4 rounded-lg whitespace-pre-wrap break-all bg-code-bg px-3 py-2.5 font-mono text-xs text-code-text select-all">sudo ufw allow from 192.168.1.0/24 to any port 47823 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 5353 proto udp</pre>
+        </article>
+
+        <article class="rounded-xl bg-surface p-6 shadow-sm" data-reveal data-delay="120">
+          <Icon name="device" size={22} class="text-accent" />
+          <h3 class="mt-3 font-semibold text-accent">Networks that keep devices apart</h3>
+          <p class="mt-2 text-sm text-muted">
+            Many hotel, café, campus and office networks stop devices from
+            reaching each other at all. Sync can't work there. A phone hotspot
+            or your home network can.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── GOOD TO KNOW ─────────────────────────────────────────────────── -->
+  <section class="py-20">
+    <div class="shell">
+      <h2 class="text-2xl font-bold text-accent" data-reveal>Good to know</h2>
+      <dl class="mt-6 grid gap-5 md:grid-cols-3">
+        {
+          goodToKnow.map((g) => (
+            <div class="rounded-xl bg-surface p-6" data-reveal>
+              <dt class="font-semibold text-text">{g.title}</dt>
+              <dd class="mt-1.5 text-sm text-muted">{g.body}</dd>
+            </div>
+          ))
+        }
+      </dl>
+      <a href="/download" class="mt-10 inline-flex items-center gap-2 rounded-lg bg-accent px-6 py-3 font-semibold text-accent-ink shadow-md transition-colors hover:bg-accent-strong" data-reveal>
+        <Icon name="download" size={18} stroke={2} /> Download Quakboard
+      </a>
+    </div>
+  </section>
+</BaseLayout>

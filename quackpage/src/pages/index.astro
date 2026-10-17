@@ -112,7 +112,7 @@ const links = Object.fromEntries(
             <span id="download-label">Download Quakboard</span>
           </a>
           <a
-            href="/docs/sync"
+            href="/sync"
             class="flex w-full items-center justify-center gap-2 rounded-lg bg-surface px-6 py-3 font-semibold text-accent shadow-sm transition-colors hover:bg-surface-2 sm:w-auto"
           >
             <Icon name="sync" size={19} />
@@ -320,7 +320,7 @@ const links = Object.fromEntries(
 
   if (isMac) point(links.mac, "Download for macOS");
   else if (isWindows) point(links.win, "Download for Windows");
-  else if (/Linux/.test(ua) && !/Android/.test(ua)) label.textContent = "Download for Linux";
+  else if (/Linux/.test(ua) && !/Android/.test(ua)) point("/download#linux", "Download for Linux");
 
   // Only Chromium browsers report the CPU. Safari doesn't, and most Macs
   // sold since 2020 are Apple Silicon, so that stays the default.
