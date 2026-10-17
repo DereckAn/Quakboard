@@ -389,7 +389,7 @@
           {/if}
 
           <!-- Metadata content -->
-          <div class="p-6">
+          <div class="p-6 long-content-guard">
             {#if linkMetadata.site_name}
               <p class="text-xs text-text-muted uppercase tracking-wider mb-2">
                 {linkMetadata.site_name}
@@ -418,14 +418,14 @@
       {:else}
         <!-- Fallback: simple link display -->
         <div
-          class="w-fit max-w-2xl mx-auto bg-surface rounded-xl border border-border p-6"
+          class="w-fit max-w-[min(42rem,calc(100%-1.5rem))] mx-auto bg-surface rounded-xl border border-border p-6"
         >
           <div class="flex items-center gap-3">
             <div
               class="w-16 h-16 rounded-lg overflow-hidden bg-surface-hover flex items-center justify-center"
             >
               <img
-                src="https://www.google.com/s2/favicons?domain={domain}&sz=64"
+                src="https://{domain}/favicon.ico"
                 alt="Favicon"
                 class="w-10 h-10"
                 onerror={(e) => {
@@ -433,7 +433,7 @@
                 }}
               />
             </div>
-            <div class="flex-1">
+            <div class="flex-1 min-w-0">
               <p class="text-sm text-text-muted mb-1">Website</p>
               <p class="text-base text-text font-medium truncate">
                 {domain}

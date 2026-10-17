@@ -273,7 +273,8 @@
     />
 
     <!-- Right panel (60%) -->
-    <div class="flex flex-col w-[65%] relative">
+    <!-- min-w-0: let it shrink below a long unbreakable line (a link's URL) -->
+    <div class="flex flex-col w-[65%] min-w-0 relative">
       <!-- Content viewer (top) -->
       <ContentViewer item={selectedItem} searchQuery={debouncedSearchQuery} />
 

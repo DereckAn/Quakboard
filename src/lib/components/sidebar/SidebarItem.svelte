@@ -83,7 +83,7 @@
     if (isLink && item.contentText) {
       tauriExtractDomain(item.contentText)
         .then((domain) => {
-          faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+          faviconUrl = `https://${domain}/favicon.ico`;
         })
         .catch(() => {
           faviconUrl = "";
