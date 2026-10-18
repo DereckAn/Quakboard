@@ -703,9 +703,19 @@ mod tests {
         dir: tempfile::TempDir,
     }
 
+    /// A port no other test gets. Asking the OS for one (port 0) and releasing
+    /// it raced: the tests' own outgoing connections take ports from that same
+    /// range before the node binds. This counter starts below it (Linux 32768+,
+    /// macOS 49152+).
     fn free_port() -> u16 {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        probe.local_addr().unwrap().port()
+        static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(20_000);
+        loop {
+            let port = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // Same address the node binds; skips ports something else holds.
+            if std::net::TcpListener::bind(("0.0.0.0", port)).is_ok() {
+                return port;
+            }
+        }
     }
 
     fn open(dir: tempfile::TempDir, name: &str, port: u16) -> Device {
@@ -843,15 +853,17 @@ mod tests {
 
     #[tokio::test]
     async fn start_cancelled_while_binding_can_start_again() {
-        // A cancelled Swift task drops `start()` mid-bind.
+        // A cancelled Swift task drops `start()` mid-bind, which drops its
+        // claim. Done by hand: polling a real `start()` once was racy, since
+        // the bind can finish before the first poll.
         let port_b = free_port();
         let a = started(open(paired_store(A_ID, B_ID, port_b), "a", free_port())).await;
         let b = open(paired_store(B_ID, A_ID, a.port), "b", port_b);
-        {
-            let mut pending = std::pin::pin!(b.node.start());
-            let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-            assert!(std::future::Future::poll(pending.as_mut(), &mut context).is_pending());
-        }
+        let token = b.node.begin_start().unwrap();
+        drop(StartClaim {
+            node: &b.node,
+            token,
+        });
         b.node.start().await.unwrap();
 
         assert_eq!(a.node.send_text("there?".into()).await, 1);
