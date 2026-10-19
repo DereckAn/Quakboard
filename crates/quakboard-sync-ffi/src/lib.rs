@@ -770,6 +770,19 @@ mod tests {
         (a, b)
     }
 
+    /// `stop()` only asks the background runtime to cancel the listener; the
+    /// socket closes once that runtime gets to it, which a loaded CI runner
+    /// can delay past the next connect.
+    async fn wait_until_port_is_free(port: u16) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while std::net::TcpListener::bind(("0.0.0.0", port)).is_err() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("listener still open 5s after stop");
+    }
+
     async fn next_event(device: &mut Device) -> Option<Event> {
         tokio::time::timeout(Duration::from_secs(5), device.events.recv())
             .await
@@ -834,6 +847,7 @@ mod tests {
     async fn stopped_node_receives_nothing() {
         let (a, b) = paired_devices().await;
         b.node.stop();
+        wait_until_port_is_free(b.port).await;
 
         assert_eq!(a.node.send_text("anyone?".into()).await, 0);
     }
