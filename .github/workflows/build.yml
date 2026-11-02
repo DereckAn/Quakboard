@@ -306,7 +306,12 @@ jobs:
           esac
           export ARCH="$TOOL_ARCH"
 
-          wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${TOOL_ARCH}.AppImage" -O appimagetool
+          # Pinned: the continuous builds change behavior without notice
+          # (the Nov 1 2026 one started rejecting our AppDir). Bump on purpose.
+          APPIMAGETOOL_VERSION=1.9.1
+          RUNTIME_VERSION=20251108
+          wget -q "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-${TOOL_ARCH}.AppImage" -O appimagetool
+          wget -q "https://github.com/AppImage/type2-runtime/releases/download/${RUNTIME_VERSION}/runtime-${TOOL_ARCH}" -O runtime
           chmod +x appimagetool
 
           workdir=$(mktemp -d)
@@ -339,7 +344,7 @@ jobs:
           #    appimagetool now rejects (and users other than the packager
           #    can't run), so open it to everyone first.
           chmod -R a+rX "$APPDIR"
-          ./appimagetool "$APPDIR" "$workdir/out.AppImage"
+          ./appimagetool --runtime-file runtime "$APPDIR" "$workdir/out.AppImage"
           mv -f "$workdir/out.AppImage" "$APPIMAGE"
           chmod +x "$APPIMAGE"
           echo "Hardened AppImage written: $APPIMAGE"
