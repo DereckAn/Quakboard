@@ -120,13 +120,13 @@
 
   {#if isOpen}
     <div
-      class="absolute top-full mt-2 right-0 z-50 w-max p-4 rounded-xl border border-border bg-surface backdrop-blur-sm shadow-lg"
+      class="absolute top-full mt-2 right-0 z-50 w-max p-2.5 rounded-xl border border-border bg-surface backdrop-blur-sm shadow-lg"
     >
-      <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center justify-between mb-1">
         <button
           onclick={() => shiftMonth(-1)}
           aria-label="Previous month"
-          class="size-8 flex items-center justify-center rounded-md hover:bg-white/10 transition-colors"
+          class="size-7 flex items-center justify-center rounded-md hover:bg-white/10 transition-colors"
         >
           <Icon name="chevronRight" size={16} class="rotate-180" />
         </button>
@@ -134,13 +134,13 @@
         <button
           onclick={() => shiftMonth(1)}
           aria-label="Next month"
-          class="size-8 flex items-center justify-center rounded-md hover:bg-white/10 transition-colors"
+          class="size-7 flex items-center justify-center rounded-md hover:bg-white/10 transition-colors"
         >
           <Icon name="chevronRight" size={16} />
         </button>
       </div>
 
-      <div class="grid grid-cols-7 gap-x-1.5 gap-y-1 text-center">
+      <div class="grid grid-cols-7 gap-x-1 gap-y-0.5 text-center">
         {#each WEEKDAYS as weekday}
           <span class="size-9 flex items-center justify-center text-xs text-text-muted">
             {weekday}
