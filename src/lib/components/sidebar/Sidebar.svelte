@@ -13,6 +13,12 @@
 
   let scrollContainer: HTMLDivElement;
 
+  // Next page of whatever is listed: search results or the plain history.
+  const loadMore = () =>
+    searchQuery.trim()
+      ? clipboardStore.loadMoreSearchResults(searchQuery.trim())
+      : clipboardStore.loadMore();
+
   const handleScroll = (e: Event) => {
     const target = e.target as HTMLDivElement;
     const scrollTop = target.scrollTop;
@@ -22,13 +28,7 @@
     // Si está cerca del fondo (100px antes), cargar más
     if (scrollHeight - scrollTop - clientHeight < 100) {
       if (clipboardStore.hasMore && !clipboardStore.isLoadingMore) {
-        // Si hay query de búsqueda, cargar más resultados de búsqueda
-        if (searchQuery.trim()) {
-          clipboardStore.loadMoreSearchResults(searchQuery.trim());
-        } else {
-          // Si no, cargar más items normales
-          clipboardStore.loadMore();
-        }
+        loadMore();
       }
     }
   };
@@ -63,7 +63,7 @@
     </div>
   {:else}
     <div class="flex-1">
-      <SidebarGroup {items} />
+      <SidebarGroup {items} {loadMore} />
     </div>
 
     <!-- Loading more indicator -->
