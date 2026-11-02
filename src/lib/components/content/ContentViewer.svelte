@@ -46,6 +46,7 @@
   const isSvg = $derived(item?.contentType === "svg");
   const isImage = $derived(item?.contentType === "image");
   const isFile = $derived(item?.contentType === "file");
+  const isFolder = $derived(isFile && item?.fileMimeType === "inode/directory");
   let isSendOpen = $state(false);
   // Same look as CopyButton, for the actions next to it.
   const ACTION_BUTTON =
@@ -556,7 +557,11 @@
           </div>
         {:else}
           <div class="w-full max-w-md p-6 flex items-center justify-center">
-            <Icon name="file" size={70} class="text-primary" />
+            {#if isFolder}
+              <Icon name="folder" size={70} fill="currentColor" strokeWidth={0} class="text-primary" />
+            {:else}
+              <Icon name="file" size={70} class="text-primary" />
+            {/if}
           </div>
         {/if}
         <div class="w-full p-2">

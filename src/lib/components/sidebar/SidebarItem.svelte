@@ -39,6 +39,7 @@
   const isSvg = $derived(item.contentType === "svg");
   const isImage = $derived(item.contentType === "image");
   const isFile = $derived(item.contentType === "file");
+  const isFolder = $derived(isFile && item.fileMimeType === "inode/directory");
   const languageInfo = $derived(
     isCode ? getLanguageInfo(item.codeLanguage) : null
   );
@@ -332,7 +333,11 @@
       <div
         class="size-7 flex items-center justify-center rounded border border-border bg-surface"
       >
-        <Icon name="file" size={18} class="text-text-muted" />
+        {#if isFolder}
+          <Icon name="folder" size={18} fill="currentColor" strokeWidth={0} class="text-text-muted" />
+        {:else}
+          <Icon name="file" size={18} class="text-text-muted" />
+        {/if}
       </div>
     {:else}
       <!-- Show type icon -->

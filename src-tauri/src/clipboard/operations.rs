@@ -47,7 +47,10 @@ fn read_clipboard_content_wayland() -> Result<ClipboardContent, String> {
     // 2. Raw image data (e.g. a screenshot) — there's no file to point to, so save bytes.
     if types.iter().any(|t| t == "image/png") {
         if let Some(image) = read_image_wayland() {
-            return Ok(ClipboardContent::Image(image, looks_like_screenshot_types(&types)));
+            return Ok(ClipboardContent::Image(
+                image,
+                looks_like_screenshot_types(&types),
+            ));
         }
     }
 
@@ -109,7 +112,7 @@ fn read_clipboard_content_native() -> Result<ClipboardContent, String> {
 
             if trimmed.starts_with("file://") {
                 if let Some(resolved) = path_from_file_url(trimmed) {
-                    if resolved.is_file() && !is_image_file_path(&resolved) {
+                    if (resolved.is_file() || resolved.is_dir()) && !is_image_file_path(&resolved) {
                         println!("📁 Detected file URL: {}", resolved.display());
                         return Ok(ClipboardContent::File(resolved));
                     }
@@ -288,7 +291,10 @@ fn file_uri(path: &Path) -> String {
         .add(b'`')
         .add(b'{')
         .add(b'}');
-    format!("file://{}", utf8_percent_encode(&path.to_string_lossy(), PATH))
+    format!(
+        "file://{}",
+        utf8_percent_encode(&path.to_string_lossy(), PATH)
+    )
 }
 
 /// Public entry point: route the write to the correct backend at runtime.
@@ -349,9 +355,9 @@ fn path_from_file_url(url: &str) -> Option<PathBuf> {
 /// copying an image (a browser's "Copy image") also offers its HTML or source
 /// URL, so any of those means "not a screenshot".
 fn looks_like_screenshot_types(types: &[String]) -> bool {
-    !types.iter().any(|t| {
-        t == "text/html" || t == "text/x-moz-url" || t == "chromium/x-source-url"
-    })
+    !types
+        .iter()
+        .any(|t| t == "text/html" || t == "text/x-moz-url" || t == "chromium/x-source-url")
 }
 
 fn looks_like_screenshot_text(text: &str) -> bool {
@@ -490,7 +496,10 @@ mod tests {
 
     #[test]
     fn file_uri_is_absolute() {
-        assert_eq!(file_uri(Path::new("/home/me/report.pdf")), "file:///home/me/report.pdf");
+        assert_eq!(
+            file_uri(Path::new("/home/me/report.pdf")),
+            "file:///home/me/report.pdf"
+        );
     }
 
     #[test]
@@ -503,7 +512,10 @@ mod tests {
 
     #[test]
     fn file_uri_encodes_non_ascii_as_utf8() {
-        assert_eq!(file_uri(Path::new("/tmp/café.pdf")), "file:///tmp/caf%C3%A9.pdf");
+        assert_eq!(
+            file_uri(Path::new("/tmp/café.pdf")),
+            "file:///tmp/caf%C3%A9.pdf"
+        );
     }
 
     #[test]
@@ -526,6 +538,9 @@ mod tests {
 
     #[test]
     fn image_with_html_is_not_a_screenshot() {
-        assert!(!looks_like_screenshot_types(&types(&["image/png", "text/html"])));
+        assert!(!looks_like_screenshot_types(&types(&[
+            "image/png",
+            "text/html"
+        ])));
     }
 }
