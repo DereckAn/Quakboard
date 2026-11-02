@@ -148,19 +148,23 @@ pub fn cleanup_missing_clipboard_files(
 pub fn get_clipboard_items_paginated(
     limit: i64,
     offset: i64,
+    filter: Option<String>,
     state: State<Mutex<AppState>>,
 ) -> Result<Vec<ClipboardItem>, String> {
     let app_state = state.lock().map_err(|e| e.to_string())?;
     let repo = ClipboardRepository::new(&app_state.db_path).map_err(|e| e.to_string())?;
-    repo.get_items_paginated(limit, offset)
+    repo.get_items_paginated(limit, offset, filter.as_deref())
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn count_clipboard_items(state: State<Mutex<AppState>>) -> Result<i64, String> {
+pub fn count_clipboard_items(
+    filter: Option<String>,
+    state: State<Mutex<AppState>>,
+) -> Result<i64, String> {
     let app_state = state.lock().map_err(|e| e.to_string())?;
     let repo = ClipboardRepository::new(&app_state.db_path).map_err(|e| e.to_string())?;
-    repo.count_items().map_err(|e| e.to_string())
+    repo.count_items(filter.as_deref()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -168,22 +172,24 @@ pub fn search_clipboard_items_fts(
     query: String,
     limit: i64,
     offset: i64,
+    filter: Option<String>,
     state: State<Mutex<AppState>>,
 ) -> Result<Vec<ClipboardItem>, String> {
     let app_state = state.lock().map_err(|e| e.to_string())?;
     let repo = ClipboardRepository::new(&app_state.db_path).map_err(|e| e.to_string())?;
-    repo.search_items_fts(&query, limit, offset)
+    repo.search_items_fts(&query, limit, offset, filter.as_deref())
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn count_search_results_fts(
     query: String,
+    filter: Option<String>,
     state: State<Mutex<AppState>>,
 ) -> Result<i64, String> {
     let app_state = state.lock().map_err(|e| e.to_string())?;
     let repo = ClipboardRepository::new(&app_state.db_path).map_err(|e| e.to_string())?;
-    repo.count_search_results_fts(&query)
+    repo.count_search_results_fts(&query, filter.as_deref())
         .map_err(|e| e.to_string())
 }
 

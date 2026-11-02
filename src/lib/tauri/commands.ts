@@ -241,42 +241,51 @@ export async function tauriSaveCleanupSettings(
 }
 
 // Pagination
+// `filter`: null for everything, "favorites", or a content type.
 export async function tauriGetItemsPaginated(
   limit: number,
-  offset: number
+  offset: number,
+  filter: string | null = null
 ): Promise<ClipboardItem[]> {
   const items = await invoke<any[]>("get_clipboard_items_paginated", {
     limit,
     offset,
+    filter,
   });
   return items.map(deserializeClipboardItem);
 }
 
-export async function tauriCountItems(): Promise<number> {
-  return await invoke<number>("count_clipboard_items");
+export async function tauriCountItems(
+  filter: string | null = null
+): Promise<number> {
+  return await invoke<number>("count_clipboard_items", { filter });
 }
 
 export async function tauriSearchItemsFTS(
   query: string,
   limit: number,
-  offset: number
+  offset: number,
+  filter: string | null = null
 ): Promise<ClipboardItem[]> {
   console.log("🔌 tauriSearchItemsFTS called:", { query, limit, offset });
   const items = await invoke<any[]>("search_clipboard_items_fts", {
     query,
     limit,
     offset,
+    filter,
   });
   console.log("✅ tauriSearchItemsFTS returned", items.length, "items");
   return items.map(deserializeClipboardItem);
 }
 
 export async function tauriCountSearchResultsFTS(
-  query: string
+  query: string,
+  filter: string | null = null
 ): Promise<number> {
   console.log("🔌 tauriCountSearchResultsFTS called:", query);
   const count = await invoke<number>("count_search_results_fts", {
     query,
+    filter,
   });
   console.log("✅ tauriCountSearchResultsFTS returned:", count);
   return count;

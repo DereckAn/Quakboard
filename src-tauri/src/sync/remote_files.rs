@@ -237,7 +237,7 @@ mod tests {
         store(&repo, &info());
         store(&repo, &info());
 
-        assert_eq!(repo.count_items().unwrap(), 1);
+        assert_eq!(repo.count_items(None).unwrap(), 1);
     }
 
     #[test]
@@ -317,7 +317,7 @@ mod tests {
         store(&repo, &info());
         repo.cleanup_missing_file_records().unwrap();
 
-        assert_eq!(repo.count_items().unwrap(), 1);
+        assert_eq!(repo.count_items(None).unwrap(), 1);
     }
 
     #[test]

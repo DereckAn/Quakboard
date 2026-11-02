@@ -24,6 +24,8 @@ class ClipboardStore {
   pageSize = $state(100); // 100 items por página para móviles
   hasMore = $state(true);
   isLoadingMore = $state(false);
+  // Applied in the database: null for everything, "favorites", or a content type.
+  filter = $state<string | null>(null);
 
   private dedupe(items: ClipboardItem[]): ClipboardItem[] {
     const seen = new Set<string>();
@@ -47,11 +49,11 @@ class ClipboardStore {
 
     try {
       // Cargar primera página
-      const firstPage = await tauriGetItemsPaginated(this.pageSize, 0);
+      const firstPage = await tauriGetItemsPaginated(this.pageSize, 0, this.filter);
       this.items = this.dedupe(firstPage);
 
       // Obtener total de items
-      this.totalItems = await tauriCountItems();
+      this.totalItems = await tauriCountItems(this.filter);
 
       // Verificar si hay más
       this.hasMore = this.items.length < this.totalItems;
@@ -74,7 +76,7 @@ class ClipboardStore {
       this.currentPage++;
       const offset = this.currentPage * this.pageSize;
 
-      const moreItems = await tauriGetItemsPaginated(this.pageSize, offset);
+      const moreItems = await tauriGetItemsPaginated(this.pageSize, offset, this.filter);
 
       const combined = [...this.items, ...moreItems];
       this.items = this.dedupe(combined);
@@ -172,12 +174,12 @@ class ClipboardStore {
     try {
       console.log("🔍 Calling tauriSearchItemsPaginated...");
       // Buscar en base de datos (primeros 100 resultados)
-      this.items = await tauriSearchItemsFTS(query, this.pageSize, 0);
+      this.items = await tauriSearchItemsFTS(query, this.pageSize, 0, this.filter);
       console.log("📊 Search returned", this.items.length, "items");
 
       // Contar total de resultados de búsqueda
       console.log("🔢 Counting total results...");
-      this.totalItems = await tauriCountSearchResultsFTS(query);
+      this.totalItems = await tauriCountSearchResultsFTS(query, this.filter);
       console.log("📈 Total results:", this.totalItems);
 
       // Verificar si hay más resultados
@@ -202,7 +204,7 @@ class ClipboardStore {
       this.currentPage++;
       const offset = this.currentPage * this.pageSize;
 
-      const moreItems = await tauriSearchItemsFTS(query, this.pageSize, offset);
+      const moreItems = await tauriSearchItemsFTS(query, this.pageSize, offset, this.filter);
 
       const combined = [...this.items, ...moreItems];
       this.items = this.dedupe(combined);

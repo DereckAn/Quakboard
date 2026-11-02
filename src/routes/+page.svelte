@@ -24,6 +24,8 @@
   // Debounced search - Ahora busca en la base de datos
   $effect(() => {
     console.log("🔍 Search effect triggered. Query:", searchQuery);
+    // Read here so a filter change reloads from the database too.
+    clipboardStore.filter = filterType === "all" ? null : filterType;
 
     if (searchTimeoutId !== null) {
       clearTimeout(searchTimeoutId);
@@ -59,7 +61,8 @@
     };
   });
 
-  // Filtered items based on filter type only (search is handled by store)
+  // The database already filters; this re-check hides items that stop
+  // matching live (a new copy arriving, a favorite removed) until a reload.
   const filteredItems = $derived.by(() => {
     let items = clipboardStore.items;
 

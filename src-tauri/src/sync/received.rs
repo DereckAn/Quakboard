@@ -271,7 +271,7 @@ mod tests {
         store(&fx);
         store(&fx);
 
-        assert_eq!(fx.repo.count_items().unwrap(), 1);
+        assert_eq!(fx.repo.count_items(None).unwrap(), 1);
     }
 
     #[test]

@@ -230,20 +230,27 @@ impl ClipboardRepository {
         Ok(deleted_count)
     }
 
-    // Get items con paginación
-    pub fn get_items_paginated(&self, limit: i64, offset: i64) -> Result<Vec<ClipboardItem>> {
+    // Get items con paginación. `filter` is None for everything, "favorites",
+    // or a content type ("link", "image", ...).
+    pub fn get_items_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+        filter: Option<&str>,
+    ) -> Result<Vec<ClipboardItem>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, content_type, content_text, content_metadata, source_app, code_language,
                     file_url, file_name, file_size_bytes, file_mime_type, file_hash,
                     is_favorite, is_snippet, snippet_name,
                     created_at, updated_at, synced, server_id
              FROM clipboard_items
+             WHERE (?3 IS NULL OR (?3 = 'favorites' AND is_favorite = 1) OR content_type = ?3)
              ORDER BY updated_at DESC
              LIMIT ?1 OFFSET ?2",
         )?;
 
         let mut items: Vec<ClipboardItem> = stmt
-            .query_map([limit, offset], |row| {
+            .query_map(params![limit, offset, filter], |row| {
                 Ok(ClipboardItem {
                     id: row.get(0)?,
                     content_type: row.get(1)?,
@@ -272,9 +279,12 @@ impl ClipboardRepository {
         Ok(items)
     }
     // Contar total de items
-    pub fn count_items(&self) -> Result<i64> {
-        let mut stmt = self.conn.prepare("SELECT COUNT(*) FROM clipboard_items")?;
-        let count: i64 = stmt.query_row([], |row| row.get(0))?;
+    pub fn count_items(&self, filter: Option<&str>) -> Result<i64> {
+        let mut stmt = self.conn.prepare(
+            "SELECT COUNT(*) FROM clipboard_items
+             WHERE (?1 IS NULL OR (?1 = 'favorites' AND is_favorite = 1) OR content_type = ?1)",
+        )?;
+        let count: i64 = stmt.query_row(params![filter], |row| row.get(0))?;
         Ok(count)
     }
 
@@ -283,6 +293,7 @@ impl ClipboardRepository {
         query: &str,
         limit: i64,
         offset: i64,
+        filter: Option<&str>,
     ) -> Result<Vec<ClipboardItem>> {
         // Preparar query para FTS5
         // Si tiene espacios, asumimos búsqueda de frase exacta
@@ -303,12 +314,13 @@ impl ClipboardRepository {
            FROM clipboard_items ci
            INNER JOIN clipboard_items_fts fts ON ci.id = fts.id
            WHERE clipboard_items_fts MATCH ?1
+             AND (?4 IS NULL OR (?4 = 'favorites' AND ci.is_favorite = 1) OR ci.content_type = ?4)
            ORDER BY rank
            LIMIT ?2 OFFSET ?3",
         )?;
 
         let mut items = stmt
-            .query_map(params![&fts_query, limit, offset], |row| {
+            .query_map(params![&fts_query, limit, offset, filter], |row| {
                 Ok(ClipboardItem {
                     id: row.get(0)?,
                     content_type: row.get(1)?,
@@ -338,7 +350,7 @@ impl ClipboardRepository {
     }
 
     // Contar resultados FTS
-    pub fn count_search_results_fts(&self, query: &str) -> Result<i64> {
+    pub fn count_search_results_fts(&self, query: &str, filter: Option<&str>) -> Result<i64> {
         let fts_query = if query.contains(' ') {
             format!("\"{}\"", query)
         } else {
@@ -346,12 +358,14 @@ impl ClipboardRepository {
         };
 
         let mut stmt = self.conn.prepare(
-            "SELECT COUNT(*) 
-           FROM clipboard_items_fts 
-           WHERE clipboard_items_fts MATCH ?1",
+            "SELECT COUNT(*)
+           FROM clipboard_items ci
+           INNER JOIN clipboard_items_fts fts ON ci.id = fts.id
+           WHERE clipboard_items_fts MATCH ?1
+             AND (?2 IS NULL OR (?2 = 'favorites' AND ci.is_favorite = 1) OR ci.content_type = ?2)",
         )?;
 
-        let count: i64 = stmt.query_row([&fts_query], |row| row.get(0))?;
+        let count: i64 = stmt.query_row(params![&fts_query, filter], |row| row.get(0))?;
         Ok(count)
     }
 
@@ -595,9 +609,69 @@ mod tests {
         )
         .unwrap();
 
-        let items = repo.get_items_paginated(10, 0).unwrap();
+        let items = repo.get_items_paginated(10, 0, None).unwrap();
         assert!(items.is_empty(), "Missing files should be removed entirely");
-        assert_eq!(repo.count_items().unwrap(), 0);
+        assert_eq!(repo.count_items(None).unwrap(), 0);
+    }
+
+    fn mixed_repo() -> (ClipboardRepository, TempDir) {
+        let (repo, dir) = setup_repo();
+        for text in ["https://a.dev", "https://b.dev", "https://c.dev"] {
+            repo.create_item(CreateClipboardItemDto {
+                content_type: "link".into(),
+                ..sample_dto(text)
+            })
+            .unwrap();
+        }
+        let plain = repo.create_item(sample_dto("plain note")).unwrap();
+        repo.create_item(sample_dto("another note")).unwrap();
+        repo.update_item(
+            &plain.id,
+            UpdateClipboardItemDto {
+                content_text: None,
+                is_favorite: Some(true),
+                is_snippet: None,
+                snippet_name: None,
+            },
+        )
+        .unwrap();
+        (repo, dir)
+    }
+
+    #[test]
+    fn type_filter_pages_only_that_type() {
+        let (repo, _dir) = mixed_repo();
+        let types: Vec<String> = repo
+            .get_items_paginated(2, 0, Some("link"))
+            .unwrap()
+            .into_iter()
+            .map(|item| item.content_type)
+            .collect();
+        assert_eq!(types, ["link", "link"]);
+    }
+
+    #[test]
+    fn type_filter_counts_only_that_type() {
+        let (repo, _dir) = mixed_repo();
+        assert_eq!(repo.count_items(Some("link")).unwrap(), 3);
+    }
+
+    #[test]
+    fn favorites_filter_returns_only_favorites() {
+        let (repo, _dir) = mixed_repo();
+        let texts: Vec<Option<String>> = repo
+            .get_items_paginated(10, 0, Some("favorites"))
+            .unwrap()
+            .into_iter()
+            .map(|item| item.content_text)
+            .collect();
+        assert_eq!(texts, [Some("plain note".to_string())]);
+    }
+
+    #[test]
+    fn search_with_type_filter_skips_other_types() {
+        let (repo, _dir) = mixed_repo();
+        assert_eq!(repo.count_search_results_fts("note", Some("link")).unwrap(), 0);
     }
 
     #[test]
@@ -606,14 +680,14 @@ mod tests {
         repo.create_item(sample_dto("Rust testing is fun")).unwrap();
         repo.create_item(sample_dto("Another entry")).unwrap();
 
-        let results = repo.search_items_fts("Rust", 10, 0).unwrap();
+        let results = repo.search_items_fts("Rust", 10, 0, None).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].content_text.as_deref(),
             Some("Rust testing is fun")
         );
 
-        let count = repo.count_search_results_fts("Rust").unwrap();
+        let count = repo.count_search_results_fts("Rust", None).unwrap();
         assert_eq!(count, 1);
     }
 
@@ -646,11 +720,11 @@ mod tests {
 
         fs::remove_file(&file_path).unwrap();
 
-        let results = repo.search_items_fts("search", 10, 0).unwrap();
+        let results = repo.search_items_fts("search", 10, 0, None).unwrap();
         assert!(
             results.is_empty(),
             "search results should skip missing files and delete the row"
         );
-        assert_eq!(repo.count_items().unwrap(), 0);
+        assert_eq!(repo.count_items(None).unwrap(), 0);
     }
 }
