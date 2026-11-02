@@ -20,7 +20,7 @@ pub enum ClipboardContent {
     Text(String),
     Image(ImageData<'static>, bool),
     ImageFile(PathBuf), // File path to image from Finder
-    File(PathBuf),      // File path to any file from Finder
+    File(PathBuf),      // File or folder path from Finder
     Empty,
 }
 
@@ -92,7 +92,7 @@ fn read_clipboard_content_native() -> Result<ClipboardContent, String> {
             }
         }
         for path in &paths_vec {
-            if path.is_file() && !is_image_file_path(path) {
+            if (path.is_file() || path.is_dir()) && !is_image_file_path(path) {
                 println!("📁 Detected file from clipboard: {}", path.display());
                 return Ok(ClipboardContent::File(path.clone()));
             }
@@ -470,9 +470,9 @@ fn read_files_wayland() -> Option<ClipboardContent> {
         }
     }
 
-    // Otherwise the first regular file (skip directories and mission paths).
+    // Otherwise the first regular file or folder (skip missing paths).
     for path in &paths {
-        if path.is_file() && !is_image_file_path(path) {
+        if (path.is_file() || path.is_dir()) && !is_image_file_path(path) {
             return Some(ClipboardContent::File(path.clone()));
         }
     }

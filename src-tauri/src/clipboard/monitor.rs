@@ -589,6 +589,9 @@ pub(crate) fn file_preview_metadata(
     thumbs_dir: &std::path::Path,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut preview = serde_json::Map::new();
+    if path.is_dir() {
+        return preview;
+    }
     if is_textual_mime(mime, extension) {
         match extract_text_preview(path, 32_768) {
             Ok(text) => {

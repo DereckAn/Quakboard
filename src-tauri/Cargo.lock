@@ -4540,6 +4540,7 @@ dependencies = [
  "webkit2gtk",
  "widestring",
  "windows 0.58.0",
+ "zip",
 ]
 
 [[package]]

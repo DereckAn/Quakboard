@@ -32,6 +32,10 @@ pub fn prepare_file_metadata(source_path: &Path) -> Result<PreparedFile, String>
         ));
     }
 
+    if source_path.is_dir() {
+        return Ok(prepare_folder_metadata(source_path));
+    }
+
     let extension = source_path
         .extension()
         .and_then(|s| s.to_str())
@@ -53,6 +57,43 @@ pub fn prepare_file_metadata(source_path: &Path) -> Result<PreparedFile, String>
         extension,
         file_name: base_name,
     })
+}
+
+/// A folder item points at the folder itself; it's zipped only when sent.
+/// Its dedup key is the path, so copying the same folder again bumps it.
+fn prepare_folder_metadata(path: &Path) -> PreparedFile {
+    let mut hasher = Sha256::new();
+    hasher.update(b"folder:");
+    hasher.update(path.to_string_lossy().as_bytes());
+    PreparedFile {
+        hash: format!("{:x}", hasher.finalize()),
+        mime_type: FOLDER_MIME.to_string(),
+        size: folder_size(path),
+        extension: None,
+        file_name: path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("folder")
+            .to_string(),
+    }
+}
+
+pub const FOLDER_MIME: &str = "inode/directory";
+
+/// Total bytes of the regular files under `dir`. Symlinks aren't followed,
+/// so a link loop can't make this run forever.
+pub fn folder_size(dir: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => folder_size(&entry.path()),
+            Ok(kind) if kind.is_file() => entry.metadata().map(|m| m.len()).unwrap_or(0),
+            _ => 0,
+        })
+        .sum()
 }
 
 pub fn store_prepared_file(

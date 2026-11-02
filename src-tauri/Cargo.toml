@@ -71,6 +71,8 @@ getrandom = "0.3"
 mdns-sd = "0.21.4"
 if-addrs = "0.15"
 quakboard-sync = { path = "../crates/quakboard-sync" }
+# Zips a copied folder so it can be sent as one file. Stored (no compression) only.
+zip = { version = "4", default-features = false }
 
 # Test dependencies
 [dev-dependencies]

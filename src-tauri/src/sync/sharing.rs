@@ -3,6 +3,7 @@
 //! UI as `sync-file-progress` and `sync-file-done` events.
 
 use std::{
+    fs::File,
     path::{Path, PathBuf},
     sync::Mutex,
     time::{Duration, Instant},
@@ -11,6 +12,7 @@ use std::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
+use zip::{result::ZipResult, write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 use super::{
     fetching::RemoteFile,
@@ -77,8 +79,24 @@ pub async fn send_file(
         .file_url
         .as_deref()
         .map(PathBuf::from)
-        .filter(|path| path.is_file())
+        .filter(|path| path.is_file() || path.is_dir())
         .ok_or("The file isn't on this device anymore")?;
+
+    // A folder goes as one zip of it, rebuilt on every send so it's current.
+    // ponytail: re-sending overwrites the zip, so an older offer of it can no
+    // longer be fetched; keep one zip per offer if that bites.
+    let is_folder = path.is_dir();
+    let path = if is_folder {
+        let zip_path = folder_zip_path(app, item_id);
+        let (folder, dest) = (path.clone(), zip_path.clone());
+        tauri::async_runtime::spawn_blocking(move || zip_folder(&folder, &dest))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("Could not zip the folder: {e}"))?;
+        zip_path
+    } else {
+        path
+    };
 
     // Hashing a big file takes a while: off the async workers, with progress.
     let hashed = {
@@ -100,19 +118,60 @@ pub async fn send_file(
     })?;
     let info = FileOfferInfo {
         offer_id: offer.offer_id,
-        name: item
-            .file_name
-            .clone()
-            .or_else(|| file_name_of(&path))
-            .unwrap_or_else(|| "file".into()),
+        name: match item.file_name.clone() {
+            Some(name) if is_folder => format!("{name}.zip"),
+            Some(name) => name,
+            None => file_name_of(&path).unwrap_or_else(|| "file".into()),
+        },
         size: hashed.stamp.size,
-        mime: item
-            .file_mime_type
-            .clone()
-            .unwrap_or_else(|| mime_guess::from_path(&path).first_or_octet_stream().to_string()),
+        mime: match item.file_mime_type.clone() {
+            _ if is_folder => "application/zip".into(),
+            Some(mime) => mime,
+            None => mime_guess::from_path(&path).first_or_octet_stream().to_string(),
+        },
         sha256: hashed.sha256,
     };
     Ok(service.send_offer(&info, device_ids).await)
+}
+
+fn folder_zip_path(app: &AppHandle, item_id: &str) -> PathBuf {
+    let state = app.state::<Mutex<AppState>>();
+    let state = lock(&state);
+    PathBuf::from(&state.app_data_dir)
+        .join("folder_sends")
+        .join(format!("{item_id}.zip"))
+}
+
+/// Zip `dir` into `dest`, inside a top folder of the same name, so unzipping
+/// gives the folder back. No compression: folders sent are mostly photos and
+/// videos, which are already compressed. Symlinks are skipped.
+fn zip_folder(dir: &Path, dest: &Path) -> ZipResult<()> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut zip = ZipWriter::new(File::create(dest)?);
+    let root = file_name_of(dir).unwrap_or_else(|| "folder".into());
+    add_folder_to_zip(&mut zip, dir, &root)?;
+    zip.finish()?;
+    Ok(())
+}
+
+fn add_folder_to_zip(zip: &mut ZipWriter<File>, dir: &Path, prefix: &str) -> ZipResult<()> {
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    zip.add_directory(format!("{prefix}/"), options)?;
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = format!("{prefix}/{}", entry.file_name().to_string_lossy());
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            add_folder_to_zip(zip, &entry.path(), &name)?;
+        } else if kind.is_file() {
+            let is_large = entry.metadata()?.len() >= u32::MAX as u64;
+            zip.start_file(name, options.large_file(is_large))?;
+            std::io::copy(&mut File::open(entry.path())?, zip)?;
+        }
+    }
+    Ok(())
 }
 
 /// Start fetching a remote item's file. Returns right away; the outcome
@@ -300,6 +359,20 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zipped_folder_keeps_nested_files_under_its_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("Trip");
+        std::fs::create_dir_all(folder.join("day1")).unwrap();
+        std::fs::write(folder.join("day1/beach.jpg"), b"jpg").unwrap();
+        let dest = tmp.path().join("out/trip.zip");
+
+        zip_folder(&folder, &dest).unwrap();
+
+        let mut archive = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
+        assert!(archive.by_name("Trip/day1/beach.jpg").is_ok());
+    }
 
     fn remote() -> RemoteFile {
         RemoteFile {
