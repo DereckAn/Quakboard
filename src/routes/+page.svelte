@@ -14,6 +14,14 @@
   // Local state
   let searchQuery = $state("");
   let filterType = $state<"all" | "favorites" | ContentType>("all");
+  // Local midnight of the day picked in the calendar.
+  let selectedDay = $state<Date | null>(null);
+  const dayRange = $derived.by(() => {
+    if (!selectedDay) return null;
+    const next = new Date(selectedDay);
+    next.setDate(next.getDate() + 1);
+    return { since: selectedDay, until: next };
+  });
   let debouncedSearchQuery = $state("");
   let searchTimeoutId: number | null = null;
   let unlistenClipboard: UnlistenFn | null = null;
@@ -25,7 +33,11 @@
   $effect(() => {
     console.log("🔍 Search effect triggered. Query:", searchQuery);
     // Read here so a filter change reloads from the database too.
-    clipboardStore.filter = filterType === "all" ? null : filterType;
+    clipboardStore.filter = {
+      kind: filterType === "all" ? null : filterType,
+      since: dayRange?.since.toISOString() ?? null,
+      until: dayRange?.until.toISOString() ?? null,
+    };
 
     if (searchTimeoutId !== null) {
       clearTimeout(searchTimeoutId);
@@ -71,6 +83,12 @@
       items = items.filter((item) => item.isFavorite);
     } else if (filterType !== "all") {
       items = items.filter((item) => item.contentType === filterType);
+    }
+    if (dayRange) {
+      const { since, until } = dayRange;
+      items = items.filter(
+        (item) => item.updatedAt >= since && item.updatedAt < until,
+      );
     }
 
     return items;
@@ -151,6 +169,8 @@
       searchQuery = "";
     } else if (filterType !== "all") {
       filterType = "all";
+    } else if (selectedDay) {
+      selectedDay = null;
     } else {
       getCurrentWindow()
         .hide()
@@ -259,6 +279,7 @@
   <Header
     bind:searchQuery
     bind:filterType
+    bind:selectedDay
     isSearching={isSearching || clipboardStore.isLoading}
     resultCount={debouncedSearchQuery.trim()
       ? clipboardStore.totalItems

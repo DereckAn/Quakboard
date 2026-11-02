@@ -6,6 +6,7 @@
   } from "$lib/tauri/commands";
   import type { ContentType } from "$lib/types";
   import { onMount } from "svelte";
+  import DatePicker from "./DatePicker.svelte";
   import FilterDropdown from "./FilterDropdown.svelte";
   import ProfileDropdown from "./ProfileDropdown.svelte";
   import SearchBar from "./SearchBar.svelte";
@@ -13,6 +14,7 @@
   interface Props {
     searchQuery?: string;
     filterType?: "all" | "favorites" | ContentType;
+    selectedDay?: Date | null;
     isAuthenticated?: boolean;
     isSearching?: boolean;
     resultCount?: number;
@@ -23,6 +25,7 @@
   let {
     searchQuery = $bindable(""),
     filterType = $bindable<"all" | "favorites" | ContentType>("all"),
+    selectedDay = $bindable<Date | null>(null),
     isAuthenticated = false,
     isSearching = false,
     resultCount,
@@ -103,6 +106,8 @@
 
   <!-- Search bar -->
   <SearchBar bind:value={searchQuery} {isSearching} {resultCount} />
+
+  <DatePicker value={selectedDay} onSelect={(day) => (selectedDay = day)} />
 
   {#if showScreenshotButton}
     <div class="relative bg-surface rounded-md">

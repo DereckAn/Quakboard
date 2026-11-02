@@ -1,6 +1,7 @@
 import type {
   ClipboardItem,
   CreateClipboardItemDto,
+  ItemFilter,
   LabFeatureId,
   LabFeatureWithMeta,
   NearbyDevice,
@@ -241,11 +242,10 @@ export async function tauriSaveCleanupSettings(
 }
 
 // Pagination
-// `filter`: null for everything, "favorites", or a content type.
 export async function tauriGetItemsPaginated(
   limit: number,
   offset: number,
-  filter: string | null = null
+  filter: ItemFilter | null = null
 ): Promise<ClipboardItem[]> {
   const items = await invoke<any[]>("get_clipboard_items_paginated", {
     limit,
@@ -256,7 +256,7 @@ export async function tauriGetItemsPaginated(
 }
 
 export async function tauriCountItems(
-  filter: string | null = null
+  filter: ItemFilter | null = null
 ): Promise<number> {
   return await invoke<number>("count_clipboard_items", { filter });
 }
@@ -265,7 +265,7 @@ export async function tauriSearchItemsFTS(
   query: string,
   limit: number,
   offset: number,
-  filter: string | null = null
+  filter: ItemFilter | null = null
 ): Promise<ClipboardItem[]> {
   console.log("🔌 tauriSearchItemsFTS called:", { query, limit, offset });
   const items = await invoke<any[]>("search_clipboard_items_fts", {
@@ -280,7 +280,7 @@ export async function tauriSearchItemsFTS(
 
 export async function tauriCountSearchResultsFTS(
   query: string,
-  filter: string | null = null
+  filter: ItemFilter | null = null
 ): Promise<number> {
   console.log("🔌 tauriCountSearchResultsFTS called:", query);
   const count = await invoke<number>("count_search_results_fts", {

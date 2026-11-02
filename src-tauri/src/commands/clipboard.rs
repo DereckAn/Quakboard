@@ -5,7 +5,9 @@ use crate::clipboard::{asset_cleanup, read_clipboard, write_clipboard};
 // Only the Wayland paste path (Linux, and the shared non-macOS code) uses these.
 #[cfg(not(target_os = "macos"))]
 use crate::clipboard::{detect_backend, ClipboardBackend};
-use crate::db::models::{ClipboardItem, CreateClipboardItemDto, UpdateClipboardItemDto};
+use crate::db::models::{
+    ClipboardItem, CreateClipboardItemDto, ItemFilter, UpdateClipboardItemDto,
+};
 use crate::db::repository::ClipboardRepository;
 use enigo::{Enigo, Key, Keyboard, Settings};
 use std::sync::Mutex;
@@ -148,23 +150,24 @@ pub fn cleanup_missing_clipboard_files(
 pub fn get_clipboard_items_paginated(
     limit: i64,
     offset: i64,
-    filter: Option<String>,
+    filter: Option<ItemFilter>,
     state: State<Mutex<AppState>>,
 ) -> Result<Vec<ClipboardItem>, String> {
     let app_state = state.lock().map_err(|e| e.to_string())?;
     let repo = ClipboardRepository::new(&app_state.db_path).map_err(|e| e.to_string())?;
-    repo.get_items_paginated(limit, offset, filter.as_deref())
+    repo.get_items_paginated(limit, offset, &filter.unwrap_or_default())
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn count_clipboard_items(
-    filter: Option<String>,
+    filter: Option<ItemFilter>,
     state: State<Mutex<AppState>>,
 ) -> Result<i64, String> {
     let app_state = state.lock().map_err(|e| e.to_string())?;
     let repo = ClipboardRepository::new(&app_state.db_path).map_err(|e| e.to_string())?;
-    repo.count_items(filter.as_deref()).map_err(|e| e.to_string())
+    repo.count_items(&filter.unwrap_or_default())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -172,24 +175,24 @@ pub fn search_clipboard_items_fts(
     query: String,
     limit: i64,
     offset: i64,
-    filter: Option<String>,
+    filter: Option<ItemFilter>,
     state: State<Mutex<AppState>>,
 ) -> Result<Vec<ClipboardItem>, String> {
     let app_state = state.lock().map_err(|e| e.to_string())?;
     let repo = ClipboardRepository::new(&app_state.db_path).map_err(|e| e.to_string())?;
-    repo.search_items_fts(&query, limit, offset, filter.as_deref())
+    repo.search_items_fts(&query, limit, offset, &filter.unwrap_or_default())
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn count_search_results_fts(
     query: String,
-    filter: Option<String>,
+    filter: Option<ItemFilter>,
     state: State<Mutex<AppState>>,
 ) -> Result<i64, String> {
     let app_state = state.lock().map_err(|e| e.to_string())?;
     let repo = ClipboardRepository::new(&app_state.db_path).map_err(|e| e.to_string())?;
-    repo.count_search_results_fts(&query, filter.as_deref())
+    repo.count_search_results_fts(&query, &filter.unwrap_or_default())
         .map_err(|e| e.to_string())
 }
 

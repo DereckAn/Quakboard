@@ -67,3 +67,11 @@ export interface GetItemsOptions {
   isFavorite?: boolean;
   isSnippet?: boolean;
 }
+// Narrows the history list in the database; null fields don't filter.
+export interface ItemFilter {
+  // "favorites" or a content type.
+  kind: string | null;
+  // ISO bounds on updatedAt: since inclusive, until exclusive.
+  since: string | null;
+  until: string | null;
+}

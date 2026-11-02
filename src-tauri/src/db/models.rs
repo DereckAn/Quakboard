@@ -46,3 +46,13 @@ pub struct UpdateClipboardItemDto {
     pub is_snippet: Option<bool>,
     pub snippet_name: Option<String>,
 }
+
+/// Narrows the history list. Every field is optional; all set ones apply.
+#[derive(Debug, Default, Deserialize)]
+pub struct ItemFilter {
+    /// "favorites" or a content type ("link", "image", ...).
+    pub kind: Option<String>,
+    /// RFC 3339 bounds on `updated_at`: `since` inclusive, `until` exclusive.
+    pub since: Option<String>,
+    pub until: Option<String>,
+}

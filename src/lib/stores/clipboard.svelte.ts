@@ -10,6 +10,7 @@ import type {
   ClipboardItem,
   CreateClipboardItemDto,
   GetItemsOptions,
+  ItemFilter,
   UpdateClipboardItemDto,
 } from "$lib/types";
 
@@ -24,8 +25,8 @@ class ClipboardStore {
   pageSize = $state(100); // 100 items por página para móviles
   hasMore = $state(true);
   isLoadingMore = $state(false);
-  // Applied in the database: null for everything, "favorites", or a content type.
-  filter = $state<string | null>(null);
+  // Applied in the database; null shows everything.
+  filter = $state<ItemFilter | null>(null);
 
   private dedupe(items: ClipboardItem[]): ClipboardItem[] {
     const seen = new Set<string>();

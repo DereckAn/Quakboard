@@ -1,10 +1,19 @@
 use crate::clipboard::asset_cleanup;
-use crate::db::models::{ClipboardItem, CreateClipboardItemDto, UpdateClipboardItemDto};
+use crate::db::models::{
+    ClipboardItem, CreateClipboardItemDto, ItemFilter, UpdateClipboardItemDto,
+};
 use chrono::Utc;
-use rusqlite::{params, Connection, Result};
+use rusqlite::{named_params, params, Connection, Result};
 use serde_json::Value;
 use std::path::PathBuf;
 use uuid::Uuid;
+
+/// WHERE clause for `ItemFilter`, on a `clipboard_items ci`. julianday()
+/// compares instants, so timestamps with different offsets still order right.
+const FILTER_SQL: &str =
+    "(:kind IS NULL OR (:kind = 'favorites' AND ci.is_favorite = 1) OR ci.content_type = :kind)
+    AND (:since IS NULL OR julianday(ci.updated_at) >= julianday(:since))
+    AND (:until IS NULL OR julianday(ci.updated_at) < julianday(:until))";
 
 pub struct ClipboardRepository {
     pub conn: Connection,
@@ -230,48 +239,56 @@ impl ClipboardRepository {
         Ok(deleted_count)
     }
 
-    // Get items con paginación. `filter` is None for everything, "favorites",
-    // or a content type ("link", "image", ...).
+    // Get items con paginación
     pub fn get_items_paginated(
         &self,
         limit: i64,
         offset: i64,
-        filter: Option<&str>,
+        filter: &ItemFilter,
     ) -> Result<Vec<ClipboardItem>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT id, content_type, content_text, content_metadata, source_app, code_language,
                     file_url, file_name, file_size_bytes, file_mime_type, file_hash,
                     is_favorite, is_snippet, snippet_name,
                     created_at, updated_at, synced, server_id
-             FROM clipboard_items
-             WHERE (?3 IS NULL OR (?3 = 'favorites' AND is_favorite = 1) OR content_type = ?3)
+             FROM clipboard_items ci
+             WHERE {FILTER_SQL}
              ORDER BY updated_at DESC
-             LIMIT ?1 OFFSET ?2",
-        )?;
+             LIMIT :limit OFFSET :offset"
+        ))?;
 
         let mut items: Vec<ClipboardItem> = stmt
-            .query_map(params![limit, offset, filter], |row| {
-                Ok(ClipboardItem {
-                    id: row.get(0)?,
-                    content_type: row.get(1)?,
-                    content_text: row.get(2)?,
-                    content_metadata: row.get(3)?,
-                    source_app: row.get(4)?,
-                    code_language: row.get(5)?,
-                    file_url: row.get(6)?,
-                    file_name: row.get(7)?,
-                    file_size_bytes: row.get(8)?,
-                    file_mime_type: row.get(9)?,
-                    file_hash: row.get(10)?,
-                    is_favorite: row.get(11)?,
-                    is_snippet: row.get(12)?,
-                    snippet_name: row.get(13)?,
-                    created_at: row.get(14)?,
-                    updated_at: row.get(15)?,
-                    synced: row.get(16)?,
-                    server_id: row.get(17)?,
-                })
-            })?
+            .query_map(
+                named_params! {
+                    ":limit": limit,
+                    ":offset": offset,
+                    ":kind": filter.kind,
+                    ":since": filter.since,
+                    ":until": filter.until,
+                },
+                |row| {
+                    Ok(ClipboardItem {
+                        id: row.get(0)?,
+                        content_type: row.get(1)?,
+                        content_text: row.get(2)?,
+                        content_metadata: row.get(3)?,
+                        source_app: row.get(4)?,
+                        code_language: row.get(5)?,
+                        file_url: row.get(6)?,
+                        file_name: row.get(7)?,
+                        file_size_bytes: row.get(8)?,
+                        file_mime_type: row.get(9)?,
+                        file_hash: row.get(10)?,
+                        is_favorite: row.get(11)?,
+                        is_snippet: row.get(12)?,
+                        snippet_name: row.get(13)?,
+                        created_at: row.get(14)?,
+                        updated_at: row.get(15)?,
+                        synced: row.get(16)?,
+                        server_id: row.get(17)?,
+                    })
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
         let _removed = self.prune_missing_file_items(&mut items)?;
@@ -279,12 +296,14 @@ impl ClipboardRepository {
         Ok(items)
     }
     // Contar total de items
-    pub fn count_items(&self, filter: Option<&str>) -> Result<i64> {
-        let mut stmt = self.conn.prepare(
-            "SELECT COUNT(*) FROM clipboard_items
-             WHERE (?1 IS NULL OR (?1 = 'favorites' AND is_favorite = 1) OR content_type = ?1)",
+    pub fn count_items(&self, filter: &ItemFilter) -> Result<i64> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT COUNT(*) FROM clipboard_items ci WHERE {FILTER_SQL}"
+        ))?;
+        let count: i64 = stmt.query_row(
+            named_params! { ":kind": filter.kind, ":since": filter.since, ":until": filter.until },
+            |row| row.get(0),
         )?;
-        let count: i64 = stmt.query_row(params![filter], |row| row.get(0))?;
         Ok(count)
     }
 
@@ -293,7 +312,7 @@ impl ClipboardRepository {
         query: &str,
         limit: i64,
         offset: i64,
-        filter: Option<&str>,
+        filter: &ItemFilter,
     ) -> Result<Vec<ClipboardItem>> {
         // Preparar query para FTS5
         // Si tiene espacios, asumimos búsqueda de frase exacta
@@ -304,7 +323,7 @@ impl ClipboardRepository {
             format!("{}*", query)
         };
 
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT ci.id, ci.content_type, ci.content_text, ci.content_metadata,
                   ci.source_app, ci.code_language,
                   ci.file_url, ci.file_name, ci.file_size_bytes, ci.file_mime_type, ci.file_hash,
@@ -313,36 +332,45 @@ impl ClipboardRepository {
                   bm25(clipboard_items_fts) as rank
            FROM clipboard_items ci
            INNER JOIN clipboard_items_fts fts ON ci.id = fts.id
-           WHERE clipboard_items_fts MATCH ?1
-             AND (?4 IS NULL OR (?4 = 'favorites' AND ci.is_favorite = 1) OR ci.content_type = ?4)
+           WHERE clipboard_items_fts MATCH :query AND {FILTER_SQL}
            ORDER BY rank
-           LIMIT ?2 OFFSET ?3",
-        )?;
+           LIMIT :limit OFFSET :offset"
+        ))?;
 
         let mut items = stmt
-            .query_map(params![&fts_query, limit, offset, filter], |row| {
-                Ok(ClipboardItem {
-                    id: row.get(0)?,
-                    content_type: row.get(1)?,
-                    content_text: row.get(2)?,
-                    content_metadata: row.get(3)?,
-                    source_app: row.get(4)?,
-                    code_language: row.get(5)?,
-                    file_url: row.get(6)?,
-                    file_name: row.get(7)?,
-                    file_size_bytes: row.get(8)?,
-                    file_mime_type: row.get(9)?,
-                    file_hash: row.get(10)?,
-                    is_favorite: row.get(11)?,
-                    is_snippet: row.get(12)?,
-                    snippet_name: row.get(13)?,
-                    created_at: row.get(14)?,
-                    updated_at: row.get(15)?,
-                    synced: row.get(16)?,
-                    server_id: row.get(17)?,
-                    // Ignoramos rank (row 18) por ahora
-                })
-            })?
+            .query_map(
+                named_params! {
+                    ":query": fts_query,
+                    ":limit": limit,
+                    ":offset": offset,
+                    ":kind": filter.kind,
+                    ":since": filter.since,
+                    ":until": filter.until,
+                },
+                |row| {
+                    Ok(ClipboardItem {
+                        id: row.get(0)?,
+                        content_type: row.get(1)?,
+                        content_text: row.get(2)?,
+                        content_metadata: row.get(3)?,
+                        source_app: row.get(4)?,
+                        code_language: row.get(5)?,
+                        file_url: row.get(6)?,
+                        file_name: row.get(7)?,
+                        file_size_bytes: row.get(8)?,
+                        file_mime_type: row.get(9)?,
+                        file_hash: row.get(10)?,
+                        is_favorite: row.get(11)?,
+                        is_snippet: row.get(12)?,
+                        snippet_name: row.get(13)?,
+                        created_at: row.get(14)?,
+                        updated_at: row.get(15)?,
+                        synced: row.get(16)?,
+                        server_id: row.get(17)?,
+                        // Ignoramos rank (row 18) por ahora
+                    })
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
         let _removed = self.prune_missing_file_items(&mut items)?;
@@ -350,22 +378,29 @@ impl ClipboardRepository {
     }
 
     // Contar resultados FTS
-    pub fn count_search_results_fts(&self, query: &str, filter: Option<&str>) -> Result<i64> {
+    pub fn count_search_results_fts(&self, query: &str, filter: &ItemFilter) -> Result<i64> {
         let fts_query = if query.contains(' ') {
             format!("\"{}\"", query)
         } else {
             format!("{}*", query)
         };
 
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT COUNT(*)
            FROM clipboard_items ci
            INNER JOIN clipboard_items_fts fts ON ci.id = fts.id
-           WHERE clipboard_items_fts MATCH ?1
-             AND (?2 IS NULL OR (?2 = 'favorites' AND ci.is_favorite = 1) OR ci.content_type = ?2)",
-        )?;
+           WHERE clipboard_items_fts MATCH :query AND {FILTER_SQL}"
+        ))?;
 
-        let count: i64 = stmt.query_row(params![&fts_query, filter], |row| row.get(0))?;
+        let count: i64 = stmt.query_row(
+            named_params! {
+                ":query": fts_query,
+                ":kind": filter.kind,
+                ":since": filter.since,
+                ":until": filter.until,
+            },
+            |row| row.get(0),
+        )?;
         Ok(count)
     }
 
@@ -609,9 +644,18 @@ mod tests {
         )
         .unwrap();
 
-        let items = repo.get_items_paginated(10, 0, None).unwrap();
+        let items = repo
+            .get_items_paginated(10, 0, &ItemFilter::default())
+            .unwrap();
         assert!(items.is_empty(), "Missing files should be removed entirely");
-        assert_eq!(repo.count_items(None).unwrap(), 0);
+        assert_eq!(repo.count_items(&ItemFilter::default()).unwrap(), 0);
+    }
+
+    fn kind(kind: &str) -> ItemFilter {
+        ItemFilter {
+            kind: Some(kind.into()),
+            ..ItemFilter::default()
+        }
     }
 
     fn mixed_repo() -> (ClipboardRepository, TempDir) {
@@ -642,7 +686,7 @@ mod tests {
     fn type_filter_pages_only_that_type() {
         let (repo, _dir) = mixed_repo();
         let types: Vec<String> = repo
-            .get_items_paginated(2, 0, Some("link"))
+            .get_items_paginated(2, 0, &kind("link"))
             .unwrap()
             .into_iter()
             .map(|item| item.content_type)
@@ -653,14 +697,14 @@ mod tests {
     #[test]
     fn type_filter_counts_only_that_type() {
         let (repo, _dir) = mixed_repo();
-        assert_eq!(repo.count_items(Some("link")).unwrap(), 3);
+        assert_eq!(repo.count_items(&kind("link")).unwrap(), 3);
     }
 
     #[test]
     fn favorites_filter_returns_only_favorites() {
         let (repo, _dir) = mixed_repo();
         let texts: Vec<Option<String>> = repo
-            .get_items_paginated(10, 0, Some("favorites"))
+            .get_items_paginated(10, 0, &kind("favorites"))
             .unwrap()
             .into_iter()
             .map(|item| item.content_text)
@@ -671,7 +715,45 @@ mod tests {
     #[test]
     fn search_with_type_filter_skips_other_types() {
         let (repo, _dir) = mixed_repo();
-        assert_eq!(repo.count_search_results_fts("note", Some("link")).unwrap(), 0);
+        assert_eq!(
+            repo.count_search_results_fts("note", &kind("link"))
+                .unwrap(),
+            0
+        );
+    }
+
+    fn set_updated_at(repo: &ClipboardRepository, text: &str, at: &str) {
+        repo.conn
+            .execute(
+                "UPDATE clipboard_items SET updated_at = ?1 WHERE content_text = ?2",
+                params![at, text],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn day_filter_keeps_only_items_updated_that_day() {
+        let (repo, _dir) = setup_repo();
+        repo.create_item(sample_dto("before")).unwrap();
+        repo.create_item(sample_dto("during")).unwrap();
+        repo.create_item(sample_dto("after")).unwrap();
+        set_updated_at(&repo, "before", "2026-11-01T05:59:59.999+00:00");
+        set_updated_at(&repo, "during", "2026-11-01T23:30:00.123456789+00:00");
+        set_updated_at(&repo, "after", "2026-11-02T06:00:00+00:00");
+        // Nov 1 in UTC-6, as the frontend sends it.
+        let day = ItemFilter {
+            since: Some("2026-11-01T06:00:00.000Z".into()),
+            until: Some("2026-11-02T06:00:00.000Z".into()),
+            ..ItemFilter::default()
+        };
+
+        let texts: Vec<Option<String>> = repo
+            .get_items_paginated(10, 0, &day)
+            .unwrap()
+            .into_iter()
+            .map(|item| item.content_text)
+            .collect();
+        assert_eq!(texts, [Some("during".to_string())]);
     }
 
     #[test]
@@ -680,14 +762,18 @@ mod tests {
         repo.create_item(sample_dto("Rust testing is fun")).unwrap();
         repo.create_item(sample_dto("Another entry")).unwrap();
 
-        let results = repo.search_items_fts("Rust", 10, 0, None).unwrap();
+        let results = repo
+            .search_items_fts("Rust", 10, 0, &ItemFilter::default())
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].content_text.as_deref(),
             Some("Rust testing is fun")
         );
 
-        let count = repo.count_search_results_fts("Rust", None).unwrap();
+        let count = repo
+            .count_search_results_fts("Rust", &ItemFilter::default())
+            .unwrap();
         assert_eq!(count, 1);
     }
 
@@ -720,11 +806,13 @@ mod tests {
 
         fs::remove_file(&file_path).unwrap();
 
-        let results = repo.search_items_fts("search", 10, 0, None).unwrap();
+        let results = repo
+            .search_items_fts("search", 10, 0, &ItemFilter::default())
+            .unwrap();
         assert!(
             results.is_empty(),
             "search results should skip missing files and delete the row"
         );
-        assert_eq!(repo.count_items(None).unwrap(), 0);
+        assert_eq!(repo.count_items(&ItemFilter::default()).unwrap(), 0);
     }
 }
